@@ -106,8 +106,8 @@ ul { margin: 0; padding: 0; list-style: none; }
 .stale-badge { color: #a9482a; background: #fff0ea; }
 .replay-badge { color: var(--blue-dark); background: var(--blue-soft); }
 .live-dot { width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
-.refresh-button { color: var(--navy); }
-.refresh-button:hover { color: var(--blue); background: var(--blue-soft); }
+.github-button, .refresh-button { color: var(--navy); }
+.github-button:hover, .refresh-button:hover { color: var(--blue); background: var(--blue-soft); }
 
 /* Main workspace */
 .workspace {
@@ -412,7 +412,7 @@ ul { margin: 0; padding: 0; list-style: none; }
 .replay-detail-note b { font-size: 13px; }
 .replay-detail-note span { color: var(--muted); font-size: 12px; }
 .detail-metrics { display: grid; grid-template-columns: repeat(4, 1fr); gap: 7px; margin-top: 18px; }
-.detail-metric { display: grid; grid-template-columns: auto 1fr; align-items: center; column-gap: 7px; min-width: 0; padding: 13px 10px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface-subtle); }
+.detail-metric { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; column-gap: 7px; min-width: 0; min-height: 74px; padding: 12px 10px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface-subtle); }
 .detail-metric > span { grid-row: 1 / 3; display: grid; place-items: center; }
 .detail-metric b { color: var(--navy); font-size: 19px; line-height: 1; font-variant-numeric: tabular-nums; }
 .detail-metric small { overflow: hidden; color: var(--muted); font-size: 12px; line-height: 1.15; text-overflow: ellipsis; white-space: nowrap; }
@@ -533,6 +533,9 @@ ul { margin: 0; padding: 0; list-style: none; }
   .notification-stack { top: 136px; }
   .detail-content { padding: 22px 18px 34px; }
   .station-hero { padding-top: 2px; }
+  .detail-metrics { grid-template-columns: repeat(2, 1fr); gap: 8px; }
+  .detail-metric { min-height: 82px; padding: 12px; }
+  .detail-metric small { overflow: visible; text-overflow: clip; white-space: normal; }
 }
 
 @media (max-width: 480px) {

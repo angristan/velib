@@ -9,6 +9,7 @@ import {
 import {
   IconBike,
   IconBolt,
+  IconBrandGithub,
   IconCloudOff,
   IconHistory,
   IconParking,
@@ -150,6 +151,20 @@ export const Header = memo(function Header({
         ) : (
           <Badge variant="light" color="gray" size="lg">En attente</Badge>
         )}
+        <Tooltip label="Voir le code source sur GitHub">
+          <ActionIcon
+            aria-label="Voir le code source sur GitHub"
+            className="github-button"
+            component="a"
+            href="https://github.com/angristan/velib"
+            rel="noreferrer"
+            size="lg"
+            target="_blank"
+            variant="subtle"
+          >
+            <IconBrandGithub size={19} />
+          </ActionIcon>
+        </Tooltip>
         <Tooltip label="Actualiser les données">
           <ActionIcon
             aria-label="Actualiser les données"
