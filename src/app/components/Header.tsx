@@ -14,7 +14,7 @@ import {
   IconParking,
   IconRefresh,
 } from "@tabler/icons-react"
-import { memo, useEffect, useRef, useState } from "react"
+import { memo, useEffect, useMemo, useRef, useState } from "react"
 import type { DataMode, LiveConnectionStatus, LiveData } from "../types"
 import { formatFreshness, formatNumber, formatTimestamp } from "../utils"
 
@@ -55,14 +55,14 @@ export const Header = memo(function Header({
   mode,
   onRefresh,
 }: HeaderProps) {
-  const totals = (data?.stations ?? []).reduce(
+  const totals = useMemo(() => (data?.stations ?? []).reduce(
     (current, station) => ({
       mechanical: current.mechanical + station.mechanical,
       electric: current.electric + station.electric,
       docks: current.docks + station.docks,
     }),
     { mechanical: 0, electric: 0, docks: 0 },
-  )
+  ), [data?.stations])
   const previousTotalsRef = useRef<typeof totals | null>(null)
   const previousTotals = previousTotalsRef.current
   useEffect(() => {
@@ -71,7 +71,7 @@ export const Header = memo(function Header({
 
   const [now, setNow] = useState(Date.now)
   useEffect(() => {
-    const interval = window.setInterval(() => setNow(Date.now()), 30_000)
+    const interval = window.setInterval(() => setNow(Date.now()), 1_000)
     return () => window.clearInterval(interval)
   }, [])
 
@@ -81,7 +81,7 @@ export const Header = memo(function Header({
   let statusClass = "stale-badge"
   let statusIcon: React.ReactNode = <IconCloudOff size={13} />
   let statusLabel = data
-    ? `${isCurrent ? disconnectedLabel : "Archive"} · ${formatFreshness(data.sourceUpdatedAt)}`
+    ? `${isCurrent ? disconnectedLabel : "Archive"} · ${formatFreshness(data.sourceUpdatedAt, now)}`
     : "En attente"
   if (data && mode === "replay") {
     statusClass = "replay-badge"
@@ -90,7 +90,7 @@ export const Header = memo(function Header({
   } else if (data && isLive) {
     statusClass = "live-badge"
     statusIcon = <span className="live-dot" />
-    statusLabel = `Actualisé ${formatFreshness(data.sourceUpdatedAt)}`
+    statusLabel = `Actualisé ${formatFreshness(data.sourceUpdatedAt, now)}`
   }
 
   return (

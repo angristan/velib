@@ -22,10 +22,11 @@ export const formatChartTime = (timestamp: number, includeDay: boolean): string 
 export const ageInMinutes = (timestamp: number, now = Date.now()): number =>
   timestamp ? Math.max(0, Math.floor((now - timestamp) / 60_000)) : 0
 
-export const formatFreshness = (timestamp: number): string => {
+export const formatFreshness = (timestamp: number, now = Date.now()): string => {
   if (!timestamp) return "heure inconnue"
-  const minutes = ageInMinutes(timestamp)
-  if (minutes < 1) return "à l’instant"
+  const seconds = Math.max(0, Math.floor((now - timestamp) / 1_000))
+  if (seconds < 60) return `il y a ${seconds} s`
+  const minutes = ageInMinutes(timestamp, now)
   if (minutes === 1) return "il y a 1 min"
   if (minutes < 60) return `il y a ${minutes} min`
   return `à ${formatTimestamp(timestamp)}`
