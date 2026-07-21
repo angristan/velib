@@ -3,6 +3,7 @@ export type ReplayWindowMinutes = 15 | 30 | 60
 export type PlaybackSpeed = 1 | 2 | 4
 export type DataMode = "live" | "replay"
 export type MapMode = "stations" | "heatmap"
+export type MapBackground = "light" | "dark"
 
 export type StationFilter = "all" | "bikes" | "electric" | "docks" | "attention"
 

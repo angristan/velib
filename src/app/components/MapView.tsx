@@ -15,6 +15,7 @@ import { availabilityBins, availabilityMarkerKey } from "../marker-style"
 import type {
   DataMode,
   LiveStationChange,
+  MapBackground,
   LiveUpdate,
   MapCamera,
   MapMode,
@@ -33,6 +34,7 @@ interface MapViewProps {
   readonly activityChanges: readonly LiveStationChange[]
   readonly mode: DataMode
   readonly mapMode: MapMode
+  readonly mapBackground: MapBackground
   readonly initialCamera: MapCamera
   readonly onCameraChange: (camera: MapCamera) => void
   readonly onSelect: (station: Station) => void
@@ -182,23 +184,41 @@ const addAvailabilityMarkerImages = (
   }
 }
 
-const mapStyle: StyleSpecification = {
+const cartoAttribution =
+  '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a> · Données <a href="https://www.velib-metropole.fr/donnees-open-data-gbfs-du-service-velib-metropole">Vélib’ Métropole</a> (<a href="https://www.etalab.gouv.fr/licence-ouverte-open-licence/">Licence Ouverte</a>) · service non officiel'
+
+const mapBackgrounds: readonly MapBackground[] = ["light", "dark"]
+
+const mapStyle = (background: MapBackground): StyleSpecification => ({
   version: 8,
   glyphs: "https://fonts.openmaptiles.org/{fontstack}/{range}.pbf",
   sources: {
-    carto: {
+    "carto-light": {
       type: "raster",
       tiles: [
         "https://a.basemaps.cartocdn.com/light_all/{z}/{x}/{y}@2x.png",
         "https://b.basemaps.cartocdn.com/light_all/{z}/{x}/{y}@2x.png",
       ],
       tileSize: 256,
-      attribution:
-        '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a> · Données <a href="https://www.velib-metropole.fr/donnees-open-data-gbfs-du-service-velib-metropole">Vélib’ Métropole</a> (<a href="https://www.etalab.gouv.fr/licence-ouverte-open-licence/">Licence Ouverte</a>) · service non officiel',
+      attribution: cartoAttribution,
+    },
+    "carto-dark": {
+      type: "raster",
+      tiles: [
+        "https://a.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}@2x.png",
+        "https://b.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}@2x.png",
+      ],
+      tileSize: 256,
+      attribution: cartoAttribution,
     },
   },
-  layers: [{ id: "carto", type: "raster", source: "carto" }],
-}
+  layers: mapBackgrounds.map((option) => ({
+    id: `carto-${option}`,
+    type: "raster",
+    source: `carto-${option}`,
+    layout: { visibility: option === background ? "visible" : "none" },
+  })),
+})
 
 export const MapView = ({
   stations,
@@ -210,6 +230,7 @@ export const MapView = ({
   activityChanges,
   mode,
   mapMode,
+  mapBackground,
   initialCamera,
   onCameraChange,
   onSelect,
@@ -235,7 +256,7 @@ export const MapView = ({
 
     const map = new Map({
       container: containerRef.current,
-      style: mapStyle,
+      style: mapStyle(mapBackground),
       center: [initialCamera.longitude, initialCamera.latitude],
       zoom: initialCamera.zoom,
       minZoom: 9,
@@ -636,6 +657,24 @@ export const MapView = ({
     if (map.loaded()) update()
     else map.once("load", update)
   }, [activityChanges, stations])
+
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map) return
+
+    const update = () => {
+      for (const option of mapBackgrounds) {
+        map.setLayoutProperty(
+          `carto-${option}`,
+          "visibility",
+          option === mapBackground ? "visible" : "none",
+        )
+      }
+    }
+
+    if (map.loaded()) update()
+    else map.once("load", update)
+  }, [mapBackground])
 
   useEffect(() => {
     const map = mapRef.current

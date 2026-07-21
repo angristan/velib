@@ -34,6 +34,7 @@ import {
 import type {
   DataMode,
   HistoryRange,
+  MapBackground,
   MapCamera,
   MapMode,
   PlaybackSpeed,
@@ -90,6 +91,7 @@ export default function App() {
   })
   const [mode, setMode] = useState<DataMode>(initialUrlState.mode)
   const [mapMode, setMapMode] = useState<MapMode>(initialUrlState.mapMode)
+  const [mapBackground, setMapBackground] = useState<MapBackground>(initialUrlState.mapBackground)
   const [replayMinutes, setReplayMinutes] = useState<ReplayWindowMinutes>(
     initialUrlState.replayMinutes,
   )
@@ -286,10 +288,12 @@ export default function App() {
     replayMinutes,
     replayAt,
     mapMode,
+    mapBackground,
     camera,
   }, window.location.href), [
     camera,
     filter,
+    mapBackground,
     mapMode,
     mode,
     replayAt,
@@ -391,6 +395,7 @@ export default function App() {
               initialCamera={initialUrlState.camera}
               liveUpdate={displayedUpdate}
               locating={locating}
+              mapBackground={mapBackground}
               mapMode={mapMode}
               mode={mode}
               onCameraChange={setCamera}
@@ -406,10 +411,12 @@ export default function App() {
             cursor={replayCursor}
             frameCount={replay.data?.frames.length ?? 0}
             loading={replay.loading}
+            mapBackground={mapBackground}
             mapMode={mapMode}
             minutes={replayMinutes}
             mode={mode}
             onCursorChange={changeReplayCursor}
+            onMapBackgroundChange={setMapBackground}
             onMapModeChange={setMapMode}
             onMinutesChange={changeReplayMinutes}
             onModeChange={changeMode}
