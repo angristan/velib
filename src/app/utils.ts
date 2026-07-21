@@ -32,6 +32,15 @@ export const formatFreshness = (timestamp: number, now = Date.now()): string => 
   return `à ${formatTimestamp(timestamp)}`
 }
 
+export const formatFreshnessCompact = (timestamp: number, now = Date.now()): string => {
+  if (!timestamp) return "heure inconnue"
+  const seconds = Math.max(0, Math.floor((now - timestamp) / 1_000))
+  if (seconds < 60) return `${seconds} s`
+  const minutes = ageInMinutes(timestamp, now)
+  if (minutes < 60) return `${minutes} min`
+  return formatTimestamp(timestamp)
+}
+
 const toRadians = (degrees: number): number => (degrees * Math.PI) / 180
 
 export const distanceInMeters = (from: Coordinates, to: Coordinates): number => {

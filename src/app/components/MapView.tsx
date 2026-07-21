@@ -1,10 +1,9 @@
-import { ActionIcon, Badge, Group, Text, Tooltip } from "@mantine/core"
+import { ActionIcon, Badge, Tooltip } from "@mantine/core"
 import {
   IconActivityHeartbeat,
   IconBike,
   IconBolt,
   IconCurrentLocation,
-  IconMapPinFilled,
   IconParking,
 } from "@tabler/icons-react"
 import type { FeatureCollection, Point } from "geojson"
@@ -14,6 +13,7 @@ import { useEffect, useRef, useState } from "react"
 import { availabilityBins, availabilityMarkerKey } from "../marker-style"
 import type {
   DataMode,
+  LiveConnectionStatus,
   LiveStationChange,
   MapBackground,
   LiveUpdate,
@@ -23,6 +23,7 @@ import type {
   UserLocation,
 } from "../types"
 import { stationStatus } from "../types"
+import { MapDataStatus } from "./MapDataStatus"
 
 interface MapViewProps {
   readonly stations: readonly Station[]
@@ -32,6 +33,9 @@ interface MapViewProps {
   readonly locating: boolean
   readonly liveUpdate: LiveUpdate | null
   readonly activityChanges: readonly LiveStationChange[]
+  readonly connection: LiveConnectionStatus
+  readonly dataError: string | null
+  readonly sourceUpdatedAt: number | null
   readonly mode: DataMode
   readonly mapMode: MapMode
   readonly mapBackground: MapBackground
@@ -234,6 +238,9 @@ export const MapView = ({
   locating,
   liveUpdate,
   activityChanges,
+  connection,
+  dataError,
+  sourceUpdatedAt,
   mode,
   mapMode,
   mapBackground,
@@ -860,21 +867,15 @@ export const MapView = ({
       data-mode={mode}
     >
       <div className="map-canvas" ref={containerRef} />
-      <div className="map-caption">
-        <Group gap={10} wrap="nowrap">
-          <IconMapPinFilled size={22} />
-          <div>
-            <Text fw={800}>
-              {mapMode === "heatmap" ? "Variations de disponibilité" : "Stations Vélib’"}
-            </Text>
-            <Text c="dimmed" size="sm">
-              {mapMode === "heatmap"
-                ? `${activityChanges.length} stations avec variation`
-                : `${stations.length} affichées`}
-            </Text>
-          </div>
-        </Group>
-      </div>
+      <MapDataStatus
+        activityCount={activityChanges.length}
+        connection={connection}
+        error={dataError}
+        mapMode={mapMode}
+        mode={mode}
+        sourceUpdatedAt={sourceUpdatedAt}
+        stationCount={stations.length}
+      />
       {liveUpdate && liveUpdate.changes.length > 0 && (
         <div
           className="live-map-update"

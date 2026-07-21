@@ -116,11 +116,7 @@ ul { margin: 0; padding: 0; list-style: none; }
 }
 .network-kpi small { display: block; margin-top: 4px; color: var(--muted); font-size: 12px; font-weight: 650; line-height: 1.1; white-space: nowrap; }
 .kpi-skeleton { width: 150px; height: 46px; }
-.header-status { justify-self: end; }
-.live-badge { color: #087557; background: var(--green-soft); }
-.stale-badge { color: #a9482a; background: #fff0ea; }
-.replay-badge { color: var(--blue-dark); background: var(--blue-soft); }
-.live-dot { width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
+.header-actions { justify-self: end; }
 .theme-toggle, .github-button, .refresh-button { color: var(--navy); }
 .theme-toggle:hover, .github-button:hover, .refresh-button:hover { color: var(--blue); background: var(--blue-soft); }
 
@@ -265,6 +261,7 @@ ul { margin: 0; padding: 0; list-style: none; }
 .replay-time { min-width: 48px; color: var(--navy); font-family: "Red Hat Display Variable", sans-serif; font-size: 13px; font-weight: 780; font-variant-numeric: tabular-nums; text-align: center; }
 .map-caption {
   position: absolute;
+  z-index: 6;
   top: 16px;
   left: 16px;
   min-width: 170px;
@@ -274,9 +271,17 @@ ul { margin: 0; padding: 0; list-style: none; }
   background: rgba(255, 255, 255, .96);
   box-shadow: 0 4px 14px rgba(21, 40, 86, .12);
 }
-.map-caption svg { color: var(--blue); }
-.map-caption .mantine-Text-root:first-child { color: var(--navy); font-size: 15px; }
-.map-caption .mantine-Text-root:last-child { font-size: 13px; }
+.map-caption > .mantine-Group-root > svg { color: var(--blue); }
+.map-caption__title { color: var(--navy); font-size: 15px; }
+.map-caption__meta { display: flex; align-items: center; gap: 6px; margin-top: 2px; color: var(--muted); font-size: 12px; font-weight: 650; white-space: nowrap; }
+.map-caption__status, .map-data-status { display: inline-flex; align-items: center; gap: 6px; }
+.map-caption__status[data-tone="live"], .map-data-status[data-tone="live"] { color: #087557; }
+.map-caption__status[data-tone="stale"], .map-data-status[data-tone="stale"] { color: #a9482a; }
+.map-caption__status[data-tone="replay"], .map-data-status[data-tone="replay"] { color: var(--blue-dark); }
+.map-caption__status[data-tone="waiting"], .map-data-status[data-tone="waiting"] { color: var(--muted); }
+.map-caption__status svg, .map-data-status svg { color: currentColor; }
+.map-data-status__dot { width: 8px; height: 8px; flex: 0 0 8px; border-radius: 50%; background: currentColor; }
+.map-data-status { display: none; }
 .live-map-update { position: absolute; top: 88px; left: 16px; display: flex; align-items: center; gap: 7px; padding: 7px 10px; border: 1px solid rgba(39,193,150,.3); border-radius: 999px; color: var(--navy); background: rgba(255,255,255,.94); box-shadow: 0 3px 10px rgba(21,40,86,.09); font-size: 13px; font-weight: 700; pointer-events: none; animation: live-map-update 10s ease both; }
 .live-map-update svg { color: #149b78; width: 17px; height: 17px; }
 .live-map-update strong { font-variant-numeric: tabular-nums; }
@@ -514,6 +519,7 @@ ul { margin: 0; padding: 0; list-style: none; }
 [data-mantine-color-scheme="dark"] .replay-deck button,
 [data-mantine-color-scheme="dark"] .replay-deck,
 [data-mantine-color-scheme="dark"] .map-caption,
+[data-mantine-color-scheme="dark"] .map-data-status,
 [data-mantine-color-scheme="dark"] .map-legend,
 [data-mantine-color-scheme="dark"] .live-map-update { background: var(--surface); }
 [data-mantine-color-scheme="dark"] .detail-close { background: #26354b; }
@@ -525,11 +531,12 @@ ul { margin: 0; padding: 0; list-style: none; }
 [data-mantine-color-scheme="dark"] .replay-toolbar button,
 [data-mantine-color-scheme="dark"] .replay-deck button,
 [data-mantine-color-scheme="dark"] .map-caption,
+[data-mantine-color-scheme="dark"] .map-data-status,
 [data-mantine-color-scheme="dark"] .map-legend,
 [data-mantine-color-scheme="dark"] .live-map-update { color: var(--ink); background: #102640; }
 [data-mantine-color-scheme="dark"] .replay-toolbar button:hover,
 [data-mantine-color-scheme="dark"] .replay-deck button:hover { color: #cfe5ff; background: #183b64; }
-[data-mantine-color-scheme="dark"] .map-caption .mantine-Text-root:last-child,
+[data-mantine-color-scheme="dark"] .map-caption__meta,
 [data-mantine-color-scheme="dark"] .map-legend .legend-hint { color: var(--muted) !important; }
 [data-mantine-color-scheme="dark"] .map-legend .legend-dot--neutral { border-color: #c4d3e8; background: #7086a2; box-shadow: 0 0 0 1px rgba(112,134,162,.4); }
 [data-mantine-color-scheme="dark"] .map-legend .legend-dot--free-docks,
@@ -587,8 +594,7 @@ ul { margin: 0; padding: 0; list-style: none; }
   .brand-mark { width: 42px; height: 42px; flex-basis: 42px; }
   .brand-name { font-size: 20px; }
   .brand-tagline { font-size: 12px; }
-  .header-status { grid-column: 2; grid-row: 1; }
-  .header-status .mantine-Badge-root { font-size: 12px; }
+  .header-actions { grid-column: 2; grid-row: 1; }
   .network-kpis { grid-column: 1 / -1; grid-row: 2; display: grid; grid-template-columns: repeat(3, 1fr); width: 100%; border-top: 1px solid var(--border); padding-top: 8px; }
   .network-kpi { grid-template-columns: 27px auto; justify-content: center; min-width: 0; padding: 1px 8px; }
   .network-kpi:first-child { padding-left: 8px; }
@@ -608,6 +614,7 @@ ul { margin: 0; padding: 0; list-style: none; }
   .station-row { padding-inline: 16px; }
   .map-column { width: 100%; height: 100%; }
   .map-caption { display: none; }
+  .map-data-status { position: absolute; z-index: 6; top: 12px; left: 12px; display: inline-flex; padding: 7px 10px; border: 1px solid var(--border); border-radius: 999px; background: rgba(255,255,255,.96); box-shadow: 0 3px 10px rgba(21,40,86,.12); font-size: 12px; font-weight: 750; white-space: nowrap; }
   .replay-controls { top: 12px; right: 12px; left: 12px; max-width: none; }
   .replay-toolbar { justify-content: flex-end; width: 100%; }
   .replay-deck { grid-template-columns: 40px minmax(90px, 1fr) auto auto; width: 100%; min-width: 0; }
@@ -638,7 +645,7 @@ ul { margin: 0; padding: 0; list-style: none; }
   .brand-mark { width: 36px; height: 36px; flex-basis: 36px; }
   .brand-name { font-size: 18px; }
   .brand-tagline { display: none; }
-  .header-status { gap: 5px !important; }
+  .header-actions { gap: 5px !important; }
   .refresh-button { width: 40px; height: 40px; }
   .network-kpi { grid-template-columns: 24px auto; gap: 6px; padding-inline: 5px; }
   .network-kpi:first-child { padding-left: 5px; }

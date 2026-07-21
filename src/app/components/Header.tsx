@@ -1,6 +1,5 @@
 import {
   ActionIcon,
-  Badge,
   Group,
   Skeleton,
   Text,
@@ -10,29 +9,22 @@ import {
   IconBike,
   IconBolt,
   IconBrandGithub,
-  IconCloudOff,
-  IconHistory,
   IconMoonStars,
   IconParking,
   IconRefresh,
   IconSun,
 } from "@tabler/icons-react"
-import { memo, useEffect, useMemo, useRef, useState } from "react"
+import { memo, useEffect, useMemo, useRef } from "react"
 import type {
-  DataMode,
-  LiveConnectionStatus,
   LiveData,
   MapBackground,
 } from "../types"
-import { formatFreshness, formatNumber, formatTimestamp } from "../utils"
+import { formatNumber } from "../utils"
 
 interface HeaderProps {
   readonly colorScheme: MapBackground
   readonly data: LiveData | null
   readonly loading: boolean
-  readonly error: string | null
-  readonly connection: LiveConnectionStatus
-  readonly mode: DataMode
   readonly onColorSchemeChange: (colorScheme: MapBackground) => void
   readonly onRefresh: () => void
 }
@@ -61,9 +53,6 @@ export const Header = memo(function Header({
   colorScheme,
   data,
   loading,
-  error,
-  connection,
-  mode,
   onColorSchemeChange,
   onRefresh,
 }: HeaderProps) {
@@ -82,30 +71,6 @@ export const Header = memo(function Header({
   useEffect(() => {
     previousTotalsRef.current = totals
   }, [totals.mechanical, totals.electric, totals.docks])
-
-  const [now, setNow] = useState(Date.now)
-  useEffect(() => {
-    const interval = window.setInterval(() => setNow(Date.now()), 1_000)
-    return () => window.clearInterval(interval)
-  }, [])
-
-  const isCurrent = Boolean(data && now - data.sourceUpdatedAt < 3 * 60_000 && !error)
-  const isLive = mode === "live" && isCurrent && connection === "live"
-  const disconnectedLabel = connection === "reconnecting" ? "Reconnexion" : "Connexion"
-  let statusClass = "stale-badge"
-  let statusIcon: React.ReactNode = <IconCloudOff size={13} />
-  let statusLabel = data
-    ? `${isCurrent ? disconnectedLabel : "Archive"} · ${formatFreshness(data.sourceUpdatedAt, now)}`
-    : "En attente"
-  if (data && mode === "replay") {
-    statusClass = "replay-badge"
-    statusIcon = <IconHistory size={13} />
-    statusLabel = `Relecture · ${formatTimestamp(data.sourceUpdatedAt)}`
-  } else if (data && isLive) {
-    statusClass = "live-badge"
-    statusIcon = <span className="live-dot" />
-    statusLabel = `Actualisé ${formatFreshness(data.sourceUpdatedAt, now)}`
-  }
 
   return (
     <header className="app-header">
@@ -151,19 +116,7 @@ export const Header = memo(function Header({
         )}
       </div>
 
-      <Group gap="sm" className="header-status" wrap="nowrap">
-        {data ? (
-          <Badge
-            className={statusClass}
-            leftSection={statusIcon}
-            size="lg"
-            variant="light"
-          >
-            {statusLabel}
-          </Badge>
-        ) : (
-          <Badge variant="light" color="gray" size="lg">En attente</Badge>
-        )}
+      <Group gap="sm" className="header-actions" wrap="nowrap">
         <Tooltip label={themeLabel}>
           <ActionIcon
             aria-label={themeLabel}

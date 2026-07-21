@@ -351,11 +351,8 @@ export default function App() {
     <div className="app-frame">
       <Header
         colorScheme={mapBackground}
-        connection={live.connection}
         data={presentedData}
-        error={live.error}
         loading={live.loading || (mode === "replay" && replay.loading)}
-        mode={mode}
         onColorSchemeChange={changeColorScheme}
         onRefresh={live.refresh}
       />
@@ -420,6 +417,8 @@ export default function App() {
           <Suspense fallback={<div className="map-loading"><Text>Chargement de la carte…</Text></div>}>
             <MapView
               activityChanges={activityChanges}
+              connection={live.connection}
+              dataError={live.error}
               initialCamera={camera}
               key={mapBackground}
               liveUpdate={displayedUpdate}
@@ -432,6 +431,7 @@ export default function App() {
               onSelect={selectStation}
               selected={selected}
               selectionFocus={selectionFocus}
+              sourceUpdatedAt={presentedData?.sourceUpdatedAt ?? null}
               stations={visibleStations}
               userLocation={userLocation}
             />
