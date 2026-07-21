@@ -57,16 +57,16 @@ const fetchJson = Effect.fn("GbfsClient.fetchJson")(function*(url: string, opera
   })
 })
 
-const stationCode = Effect.fn("GbfsClient.stationCode")(function*(value: string) {
+const parseStationCode = (value: string): number | null => {
   const parsed = Number(value)
-  if (!Number.isSafeInteger(parsed) || parsed <= 0) {
-    return yield* FeedError.make({
-      operation: "decodeStationCode",
-      detail: `Invalid station code: ${value}`
-    })
-  }
-  return parsed
-})
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null
+}
+
+const invalidStationCode = (value: string): FeedError =>
+  FeedError.make({
+    operation: "decodeStationCode",
+    detail: `Invalid station code: ${value}`
+  })
 
 const fetchStatus = Effect.fn("GbfsClient.fetchStatus")(function*() {
   const input = yield* fetchJson(STATUS_URL, "fetchStatus")
@@ -80,36 +80,32 @@ const fetchStatus = Effect.fn("GbfsClient.fetchStatus")(function*() {
     )
   )
 
-  const stations = yield* Effect.forEach(feed.data.stations, (station) =>
-    Effect.gen(function*() {
-      const code = yield* stationCode(station.stationCode)
-      let mechanical = 0
-      let electric = 0
+  const stations: Array<CompactStation> = []
+  for (const station of feed.data.stations) {
+    const code = parseStationCode(station.stationCode)
+    if (code === null) return yield* invalidStationCode(station.stationCode)
 
-      for (const available of station.num_bikes_available_types) {
-        if (available.mechanical !== undefined) {
-          mechanical += available.mechanical
-        }
-        if (available.ebike !== undefined) {
-          electric += available.ebike
-        }
-      }
+    let mechanical = 0
+    let electric = 0
+    for (const available of station.num_bikes_available_types) {
+      if (available.mechanical !== undefined) mechanical += available.mechanical
+      if (available.ebike !== undefined) electric += available.ebike
+    }
 
-      const operative =
-        (station.is_installed === true || station.is_installed === 1) &&
-        (station.is_returning === true || station.is_returning === 1) &&
-        (station.is_renting === true || station.is_renting === 1)
+    const operative =
+      (station.is_installed === true || station.is_installed === 1) &&
+      (station.is_returning === true || station.is_returning === 1) &&
+      (station.is_renting === true || station.is_renting === 1)
 
-      return CompactStation.make({
-        c: code,
-        m: mechanical,
-        e: electric,
-        d: station.num_docks_available,
-        o: operative ? 1 : 0,
-        r: station.last_reported
-      })
-    })
-  )
+    stations.push(CompactStation.make({
+      c: code,
+      m: mechanical,
+      e: electric,
+      d: station.num_docks_available,
+      o: operative ? 1 : 0,
+      r: station.last_reported
+    }))
+  }
 
   return {
     sourceUpdatedAt: feed.lastUpdatedOther,
@@ -129,19 +125,20 @@ const fetchInformation = Effect.fn("GbfsClient.fetchInformation")(function*() {
     )
   )
 
-  const stations = yield* Effect.forEach(feed.data.stations, (station) =>
-    Effect.map(stationCode(station.stationCode), (code) =>
-      StationMetadata.make({
-        stationCode: code,
-        stationId: String(station.station_id),
-        name: station.name,
-        latitude: station.lat,
-        longitude: station.lon,
-        capacity: station.capacity,
-        metadataUpdatedAt: feed.lastUpdatedOther
-      })
-    )
-  )
+  const stations: Array<StationMetadata> = []
+  for (const station of feed.data.stations) {
+    const code = parseStationCode(station.stationCode)
+    if (code === null) return yield* invalidStationCode(station.stationCode)
+    stations.push(StationMetadata.make({
+      stationCode: code,
+      stationId: String(station.station_id),
+      name: station.name,
+      latitude: station.lat,
+      longitude: station.lon,
+      capacity: station.capacity,
+      metadataUpdatedAt: feed.lastUpdatedOther
+    }))
+  }
 
   return {
     sourceUpdatedAt: feed.lastUpdatedOther,

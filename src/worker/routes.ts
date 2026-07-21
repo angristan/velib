@@ -106,7 +106,8 @@ const routeRequest = Effect.fn("routeRequest")(function*(request: Request) {
     yield* validateSearchParams(url, replaySearchParams)
     const minutes = yield* parseReplayMinutes(url.searchParams.get("minutes"))
     const at = yield* parseReplayAt(url.searchParams.get("at"), now)
-    return jsonResponse(yield* repository.replay(minutes, now, at), 200, "public, max-age=30")
+    const cacheControl = at === null ? "public, max-age=30" : "public, max-age=300"
+    return jsonResponse(yield* repository.replay(minutes, now, at), 200, cacheControl)
   }
 
   const parts = url.pathname.split("/").filter((part) => part.length > 0)
