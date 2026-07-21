@@ -61,6 +61,7 @@ interface StationMapProperties {
 
 const sourceData = (
   stations: readonly Station[],
+  mapBackground: MapBackground,
 ): FeatureCollection<Point, StationMapProperties> => ({
   type: "FeatureCollection",
   features: stations.map((station) => ({
@@ -77,7 +78,7 @@ const sourceData = (
       electric: station.electric,
       docks: station.docks,
       status: stationStatus(station),
-      availabilityMarker: availabilityMarkerKey(station),
+      availabilityMarker: `${mapBackground}-${availabilityMarkerKey(station)}`,
     },
   })),
 })
@@ -127,6 +128,7 @@ const addAvailabilityMarkerImage = (
   map: Map,
   name: string,
   segments: readonly MarkerSegment[],
+  outlineColor: string,
 ): void => {
   if (map.hasImage(name)) return
   const canvas = document.createElement("canvas")
@@ -156,7 +158,7 @@ const addAvailabilityMarkerImage = (
   context.beginPath()
   context.arc(32, 32, 28, 0, Math.PI * 2)
   context.lineWidth = 3
-  context.strokeStyle = "#ffffff"
+  context.strokeStyle = outlineColor
   context.stroke()
 
   map.addImage(name, context.getImageData(0, 0, 64, 64), { pixelRatio: 2 })
@@ -165,10 +167,12 @@ const addAvailabilityMarkerImage = (
 const addAvailabilityMarkerImages = (
   map: Map,
   stations: readonly Station[],
+  mapBackground: MapBackground,
 ): void => {
+  const outlineColor = mapBackground === "dark" ? "#172237" : "#ffffff"
   const added = new Set<string>()
   for (const station of stations) {
-    const name = availabilityMarkerKey(station)
+    const name = `${mapBackground}-${availabilityMarkerKey(station)}`
     if (added.has(name)) continue
     added.add(name)
     const bins = availabilityBins(station)
@@ -180,6 +184,7 @@ const addAvailabilityMarkerImages = (
         { units: bins.electric, color: "#2484fd" },
         { units: bins.docks, color: "#aeb6c3" },
       ],
+      outlineColor,
     )
   }
 }
@@ -269,13 +274,13 @@ export const MapView = ({
     map.on("load", () => {
       map.addSource("stations", {
         type: "geojson",
-        data: sourceData(stationsRef.current),
+        data: sourceData(stationsRef.current, mapBackground),
       })
       map.addSource("variations", {
         type: "geojson",
         data: variationSourceData(stationsRef.current, []),
       })
-      addAvailabilityMarkerImages(map, stationsRef.current)
+      addAvailabilityMarkerImages(map, stationsRef.current, mapBackground)
       map.addLayer({
         id: "station-availability-markers",
         type: "symbol",
@@ -634,14 +639,14 @@ export const MapView = ({
     const update = () => {
       const source = map.getSource("stations")
       if (source instanceof GeoJSONSource) {
-        addAvailabilityMarkerImages(map, stations)
-        source.setData(sourceData(stations))
+        addAvailabilityMarkerImages(map, stations, mapBackground)
+        source.setData(sourceData(stations, mapBackground))
       }
     }
 
     if (map.loaded()) update()
     else map.once("load", update)
-  }, [stations])
+  }, [mapBackground, stations])
 
   useEffect(() => {
     const map = mapRef.current
