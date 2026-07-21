@@ -1,6 +1,5 @@
 import type {
   DataMode,
-  MapBackground,
   MapCamera,
   MapMode,
   ReplayWindowMinutes,
@@ -21,7 +20,6 @@ export interface AppUrlState {
   readonly replayMinutes: ReplayWindowMinutes
   readonly replayAt: number | null
   readonly mapMode: MapMode
-  readonly mapBackground: MapBackground
   readonly camera: MapCamera
 }
 
@@ -86,7 +84,6 @@ export const parseAppUrlState = (search: string): AppUrlState => {
     replayMinutes: parseReplayMinutes(params.get("window")),
     replayAt,
     mapMode: params.get("layer") === "heatmap" ? "heatmap" : "stations",
-    mapBackground: params.get("basemap") === "dark" ? "dark" : "light",
     camera: parseCamera(params),
   }
 }
@@ -106,7 +103,6 @@ export const serializeAppUrlState = (
     if (state.replayAt !== null) params.set("at", String(Math.round(state.replayAt / 1_000)))
   }
   if (state.mapMode === "heatmap") params.set("layer", "heatmap")
-  if (state.mapBackground === "dark") params.set("basemap", "dark")
   params.set("lat", state.camera.latitude.toFixed(5))
   params.set("lng", state.camera.longitude.toFixed(5))
   params.set("z", state.camera.zoom.toFixed(2))

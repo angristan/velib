@@ -1,19 +1,14 @@
-import { Menu } from "@mantine/core"
 import {
   IconFlame,
   IconHistory,
-  IconLayersLinked,
   IconMap,
-  IconMoonStars,
   IconPlayerPauseFilled,
   IconPlayerPlayFilled,
   IconShare3,
-  IconSun,
   IconWifi,
 } from "@tabler/icons-react"
 import type {
   DataMode,
-  MapBackground,
   MapMode,
   PlaybackSpeed,
   ReplayWindowMinutes,
@@ -23,7 +18,6 @@ import { formatTimestamp } from "../utils"
 interface ReplayControlsProps {
   readonly mode: DataMode
   readonly mapMode: MapMode
-  readonly mapBackground: MapBackground
   readonly minutes: ReplayWindowMinutes
   readonly speed: PlaybackSpeed
   readonly cursor: number
@@ -34,7 +28,6 @@ interface ReplayControlsProps {
   readonly shareConfirmed: boolean
   readonly onModeChange: (mode: DataMode) => void
   readonly onMapModeChange: (mode: MapMode) => void
-  readonly onMapBackgroundChange: (background: MapBackground) => void
   readonly onMinutesChange: (minutes: ReplayWindowMinutes) => void
   readonly onSpeedChange: (speed: PlaybackSpeed) => void
   readonly onCursorChange: (cursor: number) => void
@@ -48,7 +41,6 @@ const speeds: readonly PlaybackSpeed[] = [1, 2, 4]
 export const ReplayControls = ({
   mode,
   mapMode,
-  mapBackground,
   minutes,
   speed,
   cursor,
@@ -59,7 +51,6 @@ export const ReplayControls = ({
   shareConfirmed,
   onModeChange,
   onMapModeChange,
-  onMapBackgroundChange,
   onMinutesChange,
   onSpeedChange,
   onCursorChange,
@@ -91,35 +82,6 @@ export const ReplayControls = ({
         {mapMode === "stations" ? <IconFlame size={17} /> : <IconMap size={17} />}
         <span>{mapMode === "stations" ? "Variations" : "Stations"}</span>
       </button>
-      <Menu position="bottom-end" shadow="md" width={178}>
-        <Menu.Target>
-          <button
-            aria-label="Choisir le fond de carte"
-            className="replay-tool-button"
-            type="button"
-          >
-            <IconLayersLinked size={17} />
-            <span>Fond</span>
-          </button>
-        </Menu.Target>
-        <Menu.Dropdown className="map-style-menu">
-          <Menu.Label>Fond de carte</Menu.Label>
-          <Menu.Item
-            data-active={mapBackground === "light" || undefined}
-            leftSection={<IconSun size={16} />}
-            onClick={() => onMapBackgroundChange("light")}
-          >
-            Plan clair
-          </Menu.Item>
-          <Menu.Item
-            data-active={mapBackground === "dark" || undefined}
-            leftSection={<IconMoonStars size={16} />}
-            onClick={() => onMapBackgroundChange("dark")}
-          >
-            Plan sombre
-          </Menu.Item>
-        </Menu.Dropdown>
-      </Menu>
       <button
         className="replay-tool-button replay-share-button"
         onClick={onShare}

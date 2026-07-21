@@ -26,7 +26,7 @@ if (!root) throw new Error("Point de montage React introuvable")
 
 createRoot(root).render(
   <StrictMode>
-    <MantineProvider defaultColorScheme="light" theme={theme}>
+    <MantineProvider defaultColorScheme="auto" theme={theme}>
       <App />
     </MantineProvider>
   </StrictMode>,

@@ -5,6 +5,8 @@ import {
   Skeleton,
   Text,
   Tooltip,
+  useComputedColorScheme,
+  useMantineColorScheme,
 } from "@mantine/core"
 import {
   IconBike,
@@ -12,8 +14,10 @@ import {
   IconBrandGithub,
   IconCloudOff,
   IconHistory,
+  IconMoonStars,
   IconParking,
   IconRefresh,
+  IconSun,
 } from "@tabler/icons-react"
 import { memo, useEffect, useMemo, useRef, useState } from "react"
 import type { DataMode, LiveConnectionStatus, LiveData } from "../types"
@@ -56,6 +60,10 @@ export const Header = memo(function Header({
   mode,
   onRefresh,
 }: HeaderProps) {
+  const { setColorScheme } = useMantineColorScheme()
+  const colorScheme = useComputedColorScheme("light")
+  const nextColorScheme = colorScheme === "dark" ? "light" : "dark"
+  const themeLabel = colorScheme === "dark" ? "Passer au thème clair" : "Passer au thème sombre"
   const totals = useMemo(() => (data?.stations ?? []).reduce(
     (current, station) => ({
       mechanical: current.mechanical + station.mechanical,
@@ -151,6 +159,17 @@ export const Header = memo(function Header({
         ) : (
           <Badge variant="light" color="gray" size="lg">En attente</Badge>
         )}
+        <Tooltip label={themeLabel}>
+          <ActionIcon
+            aria-label={themeLabel}
+            className="theme-toggle"
+            onClick={() => setColorScheme(nextColorScheme)}
+            size="lg"
+            variant="subtle"
+          >
+            {colorScheme === "dark" ? <IconSun size={19} /> : <IconMoonStars size={19} />}
+          </ActionIcon>
+        </Tooltip>
         <Tooltip label="Voir le code source sur GitHub">
           <ActionIcon
             aria-label="Voir le code source sur GitHub"
