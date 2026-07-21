@@ -3,10 +3,66 @@ import type {
   LiveData,
   LiveStationChange,
   LiveUpdate,
+  ReplayBaselineStation,
   ReplayData,
   Station,
   StationTrend,
 } from "./types"
+
+const advanceReplayBaseline = (
+  stations: readonly ReplayBaselineStation[],
+  frame: LiveUpdate,
+): readonly ReplayBaselineStation[] => {
+  const states = new Map(stations.map((station) => [station.code, station]))
+  for (const change of frame.changes) {
+    states.set(change.code, {
+      code: change.code,
+      mechanical: change.mechanical,
+      electric: change.electric,
+      docks: change.docks,
+      operative: change.operative,
+    })
+  }
+  return [...states.values()]
+}
+
+export const appendReplayUpdate = (
+  replay: ReplayData,
+  update: LiveUpdate,
+): ReplayData => {
+  const latestSourceUpdatedAt = replay.frames.at(-1)?.sourceUpdatedAt ??
+    replay.baseline.sourceUpdatedAt
+  if (
+    update.sourceUpdatedAt <= latestSourceUpdatedAt ||
+    update.previousSourceUpdatedAt !== latestSourceUpdatedAt
+  ) return replay
+
+  const cutoff = update.sourceUpdatedAt - replay.minutes * 60_000
+  const frames = [...replay.frames, update]
+  let baseline = replay.baseline
+  let firstRetainedFrame = 0
+  while (
+    firstRetainedFrame < frames.length &&
+    frames[firstRetainedFrame]?.sourceUpdatedAt < cutoff
+  ) {
+    const frame = frames[firstRetainedFrame]
+    if (frame === undefined) break
+    baseline = {
+      observedAt: frame.observedAt,
+      sourceUpdatedAt: frame.sourceUpdatedAt,
+      stations: advanceReplayBaseline(baseline.stations, frame),
+    }
+    firstRetainedFrame += 1
+  }
+
+  return {
+    ...replay,
+    from: baseline.sourceUpdatedAt,
+    to: update.sourceUpdatedAt,
+    baseline,
+    frames: frames.slice(firstRetainedFrame),
+  }
+}
 
 export const replayDataAt = (
   metadata: readonly Station[],

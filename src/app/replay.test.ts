@@ -1,6 +1,7 @@
 import { assert, it } from "@effect/vitest"
 
 import {
+  appendReplayUpdate,
   nearestReplayCursor,
   replayDataAt,
   stationTrend,
@@ -81,4 +82,29 @@ it("finds shared replay positions and derives a selected-station streak", () => 
   assert.strictEqual(nearestReplayCursor(replay, 120_000), 1)
   assert.deepEqual(stationTrend(replay, "1001").deltas, [2, -2])
   assert.deepEqual(stationTrend(replay, "1001").points, [0, 2, 0])
+})
+
+it("advances the replay window with sequential WebSocket updates", () => {
+  const update = {
+    observedAt: 1_102_000,
+    previousSourceUpdatedAt: 178_000,
+    sourceUpdatedAt: 1_100_000,
+    changes: [{
+      code: "1001",
+      mechanical: 7,
+      electric: 1,
+      docks: 12,
+      operative: true,
+      mechanicalDelta: 2,
+      electricDelta: 0,
+      docksDelta: -2,
+    }],
+  }
+  const next = appendReplayUpdate(replay, update)
+
+  assert.strictEqual(next.baseline.sourceUpdatedAt, 178_000)
+  assert.strictEqual(next.baseline.stations[0]?.mechanical, 5)
+  assert.strictEqual(next.frames.length, 1)
+  assert.strictEqual(replayDataAt([station], next, 1).stations[0]?.mechanical, 7)
+  assert.strictEqual(appendReplayUpdate(next, update), next)
 })

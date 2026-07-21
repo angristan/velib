@@ -6,6 +6,7 @@ import {
   fetchStationHistory,
 } from "../api"
 import { applyLiveUpdate } from "../live-update"
+import { appendReplayUpdate } from "../replay"
 import type {
   HistoryRange,
   LiveConnectionStatus,
@@ -203,11 +204,14 @@ export const useReplayData = (
   minutes: ReplayWindowMinutes,
   refreshKey: number,
   anchorAt: number | null,
+  liveUpdate: LiveUpdate | null,
 ): QueryState<ReplayData | null> => {
   const [data, setData] = useState<ReplayData | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const parametersRef = useRef({ minutes, anchorAt })
+  const liveUpdateRef = useRef(liveUpdate)
+  liveUpdateRef.current = liveUpdate
 
   useEffect(() => {
     const controller = new AbortController()
@@ -219,7 +223,14 @@ export const useReplayData = (
     setError(null)
 
     fetchReplayData(minutes, anchorAt, controller.signal)
-      .then(setData)
+      .then((replay) => {
+        const latestUpdate = liveUpdateRef.current
+        setData(
+          replay === null || latestUpdate === null
+            ? replay
+            : appendReplayUpdate(replay, latestUpdate),
+        )
+      })
       .catch((nextError: unknown) => {
         if (!controller.signal.aborted) setError(messageFrom(nextError))
       })
@@ -229,6 +240,13 @@ export const useReplayData = (
 
     return () => controller.abort()
   }, [anchorAt, minutes, refreshKey])
+
+  useEffect(() => {
+    if (liveUpdate === null) return
+    setData((current) => current === null
+      ? null
+      : appendReplayUpdate(current, liveUpdate))
+  }, [liveUpdate])
 
   return { data, loading, error }
 }

@@ -104,9 +104,14 @@ export default function App() {
   const [locating, setLocating] = useState(false)
   const [locationError, setLocationError] = useState<string | null>(null)
   const replayRefreshKey = mode === "live"
-    ? Math.floor((live.data?.sourceUpdatedAt ?? 0) / (5 * 60_000))
+    ? Math.floor((live.data?.sourceUpdatedAt ?? 0) / (15 * 60_000))
     : -1
-  const replay = useReplayData(replayMinutes, replayRefreshKey, replayAnchorAt)
+  const replay = useReplayData(
+    replayMinutes,
+    replayRefreshKey,
+    replayAnchorAt,
+    mode === "live" ? live.liveUpdate : null,
+  )
 
   useEffect(() => {
     try {
