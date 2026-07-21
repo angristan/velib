@@ -770,7 +770,7 @@ export const MapView = ({
     const clearTimer = window.setTimeout(() => {
       for (const marker of markers) marker.remove()
       if (rippleMarkersRef.current === markers) rippleMarkersRef.current = []
-    }, 5_800)
+    }, 10_200)
 
     return () => {
       window.clearTimeout(clearTimer)
