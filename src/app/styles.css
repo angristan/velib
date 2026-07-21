@@ -373,7 +373,7 @@ ul { margin: 0; padding: 0; list-style: none; }
 .detail-close { position: sticky; z-index: 2; top: 14px; float: right; margin: 14px 14px -48px 0; color: var(--navy); background: #f0f3f7; }
 .detail-close:hover { color: var(--blue); background: var(--blue-soft); }
 .detail-content { padding: 28px 24px 34px; }
-.station-hero { padding: 4px 40px 22px 0; border-bottom: 1px solid var(--border); }
+.station-hero { padding: 4px 0 22px; border-bottom: 1px solid var(--border); }
 .detail-code { color: var(--muted); font-size: 13px; font-weight: 700; }
 .detail-title {
   margin: 0;
@@ -384,6 +384,7 @@ ul { margin: 0; padding: 0; list-style: none; }
   line-height: 1.18;
   letter-spacing: -0.025em;
 }
+.station-detail-panel .detail-title { padding-right: 44px; }
 .capacity-summary { display: flex; align-items: flex-end; justify-content: space-between; gap: 15px; margin-top: 22px; }
 .capacity-summary > div { display: flex; align-items: baseline; gap: 8px; }
 .capacity-summary strong { color: var(--navy); font-size: 34px; font-weight: 820; line-height: .9; font-variant-numeric: tabular-nums; }
