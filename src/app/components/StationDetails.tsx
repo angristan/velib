@@ -177,7 +177,12 @@ const DetailContent = ({
                 ))}
               </div>
             </div>
-            <svg aria-hidden="true" className="station-streak__chart" viewBox="0 0 180 36">
+            <svg
+              aria-hidden="true"
+              className="station-streak__chart"
+              preserveAspectRatio="none"
+              viewBox="0 0 180 36"
+            >
               <line x1="0" x2="180" y1="30" y2="30" />
               <polyline points={sparklinePoints(trend.points)} />
             </svg>
