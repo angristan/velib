@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 import {
+  ApiRequestError,
   decodeLiveUpdate,
   fetchLiveData,
   fetchReplayData,
@@ -30,7 +31,10 @@ const RECONNECT_DELAYS_MS = [1_000, 2_000, 5_000, 10_000, 30_000, 60_000, 5 * 60
 const messageFrom = (error: unknown): string =>
   error instanceof Error ? error.message : "Une erreur inattendue est survenue"
 
-export const useLiveData = (): QueryState<LiveData | null> & {
+export const useLiveData = (
+  enabled: boolean,
+  onUnauthorized: () => void,
+): QueryState<LiveData | null> & {
   readonly connection: LiveConnectionStatus
   readonly liveUpdate: LiveUpdate | null
   readonly refresh: () => void
@@ -51,6 +55,10 @@ export const useLiveData = (): QueryState<LiveData | null> & {
   }, [])
 
   useEffect(() => {
+    if (!enabled) {
+      setLoading(false)
+      return
+    }
     const controller = new AbortController()
     let inFlight = false
     let lastLoadedAt = 0
@@ -79,7 +87,13 @@ export const useLiveData = (): QueryState<LiveData | null> & {
         lastLoadedAt = Date.now()
         setError(null)
       } catch (nextError) {
-        if (!controller.signal.aborted) setError(messageFrom(nextError))
+        if (!controller.signal.aborted) {
+          if (nextError instanceof ApiRequestError && nextError.status === 401) {
+            onUnauthorized()
+          } else {
+            setError(messageFrom(nextError))
+          }
+        }
       } finally {
         inFlight = false
         if (!controller.signal.aborted) setLoading(false)
@@ -103,9 +117,14 @@ export const useLiveData = (): QueryState<LiveData | null> & {
       window.clearInterval(interval)
       document.removeEventListener("visibilitychange", reconcileWhenNeeded)
     }
-  }, [requestNumber])
+  }, [enabled, onUnauthorized, requestNumber])
 
   useEffect(() => {
+    if (!enabled) {
+      socketOpenRef.current = false
+      setConnection("connecting")
+      return
+    }
     let stopped = false
     let socket: WebSocket | null = null
     let reconnectTimer: number | undefined
@@ -195,7 +214,7 @@ export const useLiveData = (): QueryState<LiveData | null> & {
       if (stableTimer !== undefined) window.clearTimeout(stableTimer)
       socket?.close()
     }
-  }, [])
+  }, [enabled])
 
   return { data, loading, error, connection, liveUpdate, refresh }
 }
@@ -205,6 +224,8 @@ export const useReplayData = (
   refreshKey: number,
   anchorAt: number | null,
   liveUpdate: LiveUpdate | null,
+  enabled: boolean,
+  onUnauthorized: () => void,
 ): QueryState<ReplayData | null> => {
   const [data, setData] = useState<ReplayData | null>(null)
   const [loading, setLoading] = useState(true)
@@ -214,6 +235,10 @@ export const useReplayData = (
   liveUpdateRef.current = liveUpdate
 
   useEffect(() => {
+    if (!enabled) {
+      setLoading(false)
+      return
+    }
     const controller = new AbortController()
     const parametersChanged = parametersRef.current.minutes !== minutes ||
       parametersRef.current.anchorAt !== anchorAt
@@ -232,14 +257,19 @@ export const useReplayData = (
         )
       })
       .catch((nextError: unknown) => {
-        if (!controller.signal.aborted) setError(messageFrom(nextError))
+        if (controller.signal.aborted) return
+        if (nextError instanceof ApiRequestError && nextError.status === 401) {
+          onUnauthorized()
+        } else {
+          setError(messageFrom(nextError))
+        }
       })
       .finally(() => {
         if (!controller.signal.aborted) setLoading(false)
       })
 
     return () => controller.abort()
-  }, [anchorAt, minutes, refreshKey])
+  }, [anchorAt, enabled, minutes, onUnauthorized, refreshKey])
 
   useEffect(() => {
     if (liveUpdate === null) return
@@ -254,12 +284,18 @@ export const useReplayData = (
 export const useStationHistory = (
   stationCode: string | null,
   range: HistoryRange,
+  enabled: boolean,
+  onUnauthorized: () => void,
 ): QueryState<StationHistory | null> => {
   const [data, setData] = useState<StationHistory | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
+    if (!enabled) {
+      setLoading(false)
+      return
+    }
     if (!stationCode) {
       setData(null)
       setError(null)
@@ -275,14 +311,19 @@ export const useStationHistory = (
         setData(history)
       })
       .catch((nextError: unknown) => {
-        if (!controller.signal.aborted) setError(messageFrom(nextError))
+        if (controller.signal.aborted) return
+        if (nextError instanceof ApiRequestError && nextError.status === 401) {
+          onUnauthorized()
+        } else {
+          setError(messageFrom(nextError))
+        }
       })
       .finally(() => {
         if (!controller.signal.aborted) setLoading(false)
       })
 
     return () => controller.abort()
-  }, [stationCode, range])
+  }, [enabled, onUnauthorized, range, stationCode])
 
   return { data, loading, error }
 }

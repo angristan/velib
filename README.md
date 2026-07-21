@@ -15,12 +15,13 @@ Vélib GBFS ── every minute ──▶ Cron Worker
                   ▼               ▼                 ▼
            latest status    gzip snapshots     5-minute rollups
                   │
-                  ├──▶ Worker JSON API ── initial state / recovery ──┐
-                  │                                                   ▼
+                  ├──▶ Turnstile session + rate limit ──▶ Worker JSON API ──┐
+                  │                                                          ▼
                   └── compact diff ──▶ LiveFeed Durable Object ── WebSockets
-                                                                      │
-                                                                      ▼
-                                                       React + Mantine + MapLibre
+                                             ▲                                │
+                                             └── verified session ─────────────┘
+                                                                              ▼
+                                                               React + Mantine + MapLibre
 ```
 
 - **Effect** owns boundary decoding, typed failures, services, layers, ingestion, and request workflows.
@@ -29,6 +30,7 @@ Vélib GBFS ── every minute ──▶ Cron Worker
 - **LiveFeed Durable Object** broadcasts each compact network diff through hibernating WebSockets. D1 remains authoritative; the JSON API handles initial state and five-minute reconciliation.
 - **Bounded replay API** reads at most about 70 candidate minute snapshots, returns at most 61 timeline snapshots as one compact baseline plus sequential sparse diffs, and is edge-cached for reuse.
 - **Workers Static Assets** serves the interface; API responses carry cache directives for edge reuse.
+- **Managed Turnstile** creates a signed, 30-minute HttpOnly session before data access. Workers Rate Limiting bindings allow approximately 60 API requests per minute per verified random session and 20 verification attempts per minute per client address and Cloudflare location. Health and session bootstrap remain public.
 
 The interface can replay the latest 15, 30, or 60 minutes, switch to a gain/loss heatmap, show per-station streaks, and share a canonical URL containing the camera, filters, selection, layer, and replay timestamp. Live collection remains connected in the background while replay is frozen.
 
@@ -36,9 +38,12 @@ The interface can replay the latest 15, 30, or 60 minutes, switch to a gain/loss
 
 ```bash
 bun install
+cp .dev.vars.example .dev.vars
 bun run db:migrate:local
 bun run dev
 ```
+
+The example environment uses Cloudflare's official test-only Turnstile keys. Never use them in production.
 
 The first scheduled collection can be triggered locally through Wrangler's scheduled endpoint:
 
@@ -58,7 +63,7 @@ bun run build
 
 ## Deployment
 
-The production D1 binding and `velib.stanislas.cloud` custom domain are declared in `wrangler.jsonc`. Apply any pending migrations before deploying:
+The production D1 binding, Turnstile site key, native rate limiter, and `velib.stanislas.cloud` custom domain are declared in `wrangler.jsonc`. Production additionally requires the `TURNSTILE_SECRET_KEY` and `SESSION_SIGNING_SECRET` Worker secrets. Apply any pending migrations before deploying:
 
 ```bash
 bun run db:migrate:remote

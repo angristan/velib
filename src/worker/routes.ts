@@ -1,5 +1,11 @@
-import { Effect } from "effect"
+import { Effect, Schema } from "effect"
 
+import {
+  AccessControl,
+  RateLimitExceeded,
+  VerificationFailed
+} from "./access"
+import { type SessionCryptoError } from "./signing"
 import {
   HistoryRange,
   MINUTE_SECONDS,
@@ -9,14 +15,17 @@ import {
 } from "./domain"
 import { VelibRepository } from "./repository"
 
-const jsonResponse = (value: unknown, status = 200, cacheControl = "no-store"): Response =>
-  new Response(JSON.stringify(value), {
-    status,
-    headers: {
-      "content-type": "application/json; charset=utf-8",
-      "cache-control": cacheControl
-    }
-  })
+const jsonResponse = (
+  value: unknown,
+  status = 200,
+  cacheControl = "no-store",
+  headers?: HeadersInit
+): Response => {
+  const responseHeaders = new Headers(headers)
+  responseHeaders.set("content-type", "application/json; charset=utf-8")
+  responseHeaders.set("cache-control", cacheControl)
+  return new Response(JSON.stringify(value), { status, headers: responseHeaders })
+}
 
 const errorResponse = (status: number, code: string, message: string): Response =>
   jsonResponse({ error: { code, message } }, status)
@@ -35,6 +44,57 @@ const validateSearchParams = Effect.fn("validateSearchParams")(function*(
       return yield* RequestError.make({ detail: `Query parameter must not be repeated: ${key}` })
     }
   }
+})
+
+const SessionVerificationRequest = Schema.Struct({
+  turnstileToken: Schema.String
+})
+
+class SessionBodyTooLarge extends Error {}
+
+const readSessionJson = async (request: Request): Promise<unknown> => {
+  if (request.body === null) throw new Error("Missing request body")
+  const reader = request.body.getReader()
+  const chunks: Uint8Array[] = []
+  let length = 0
+  while (true) {
+    const result = await reader.read()
+    if (result.done) break
+    length += result.value.byteLength
+    if (length > 4_096) {
+      await reader.cancel()
+      throw new SessionBodyTooLarge("Session request is too large")
+    }
+    chunks.push(result.value)
+  }
+
+  const body = new Uint8Array(length)
+  let offset = 0
+  for (const chunk of chunks) {
+    body.set(chunk, offset)
+    offset += chunk.byteLength
+  }
+  return JSON.parse(new TextDecoder().decode(body))
+}
+
+const parseSessionVerification = Effect.fn("parseSessionVerification")(function*(
+  request: Request
+) {
+  const contentLength = Number(request.headers.get("Content-Length") ?? "0")
+  if (Number.isFinite(contentLength) && contentLength > 4_096) {
+    return yield* RequestError.make({ detail: "Session request is too large" })
+  }
+  const input = yield* Effect.tryPromise({
+    try: () => readSessionJson(request),
+    catch: (cause) => RequestError.make({
+      detail: cause instanceof SessionBodyTooLarge
+        ? cause.message
+        : "Session request must be valid JSON"
+    })
+  })
+  return yield* Schema.decodeUnknownEffect(SessionVerificationRequest)(input).pipe(
+    Effect.mapError(() => RequestError.make({ detail: "Turnstile token is required" }))
+  )
 })
 
 const noSearchParams = new Set<string>()
@@ -86,12 +146,31 @@ const parseReplayAt = Effect.fn("parseReplayAt")(function*(
 })
 
 const routeRequest = Effect.fn("routeRequest")(function*(request: Request) {
+  const url = new URL(request.url)
+  if (url.pathname === "/api/session") {
+    yield* validateSearchParams(url, noSearchParams)
+    const access = yield* AccessControl
+    if (request.method === "GET") {
+      return jsonResponse(yield* access.status(request))
+    }
+    if (request.method === "POST") {
+      const payload = yield* parseSessionVerification(request)
+      const created = yield* access.create(request, payload.turnstileToken)
+      return jsonResponse(
+        { verified: true },
+        200,
+        "no-store",
+        { "Set-Cookie": created.cookie }
+      )
+    }
+    return errorResponse(405, "method_not_allowed", "Only GET and POST are supported")
+  }
+
   if (request.method !== "GET") {
     return errorResponse(405, "method_not_allowed", "Only GET is supported")
   }
 
   const repository = yield* VelibRepository
-  const url = new URL(request.url)
   const now = Math.floor(Date.now() / 1000)
 
   if (url.pathname === "/api/health") {
@@ -140,6 +219,19 @@ export const handleRequest = (request: Request) =>
           detail: error.detail
         }).pipe(
           Effect.as(errorResponse(503, "storage_unavailable", "Data is temporarily unavailable"))
+        ),
+      VerificationFailed: (error: VerificationFailed) =>
+        Effect.succeed(errorResponse(403, "verification_failed", error.message)),
+      RateLimitExceeded: (error: RateLimitExceeded) =>
+        Effect.succeed(jsonResponse(
+          { error: { code: "rate_limited", message: error.message } },
+          429,
+          "no-store",
+          { "Retry-After": String(error.retryAfter) }
+        )),
+      SessionCryptoError: (error: SessionCryptoError) =>
+        Effect.logError("Session cryptography failed", { cause: error.cause }).pipe(
+          Effect.as(errorResponse(500, "session_unavailable", "Session is temporarily unavailable"))
         )
     })
   )

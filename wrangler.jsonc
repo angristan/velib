@@ -16,6 +16,31 @@
   "triggers": {
     "crons": ["* * * * *"]
   },
+  "vars": {
+    "APP_ENV": "production",
+    "APP_ORIGIN": "https://velib.stanislas.cloud",
+    "TURNSTILE_HOSTNAME": "velib.stanislas.cloud",
+    "TURNSTILE_SITE_KEY": "0x4AAAAAAD6omDRMusYD6r0s",
+    "SESSION_TTL": "30m"
+  },
+  "ratelimits": [
+    {
+      "name": "API_RATE_LIMITER",
+      "namespace_id": "731903",
+      "simple": {
+        "limit": 60,
+        "period": 60
+      }
+    },
+    {
+      "name": "SESSION_RATE_LIMITER",
+      "namespace_id": "731904",
+      "simple": {
+        "limit": 20,
+        "period": 60
+      }
+    }
+  ],
   "d1_databases": [
     {
       "binding": "DB",

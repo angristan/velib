@@ -24,6 +24,8 @@ import { DataStateOverlay } from "./components/DataStateOverlay"
 import { Header } from "./components/Header"
 import { ReplayControls } from "./components/ReplayControls"
 import { StationList } from "./components/StationList"
+import { TurnstileGate } from "./components/TurnstileGate"
+import { useAccessSession } from "./hooks/useAccessSession"
 import {
   useLiveData,
   useReplayData,
@@ -83,7 +85,8 @@ export default function App() {
   const initialUrlState = initialUrlStateRef.current
   const { setColorScheme } = useMantineColorScheme()
   const computedColorScheme = useComputedColorScheme("light")
-  const live = useLiveData()
+  const access = useAccessSession()
+  const live = useLiveData(access.verified, access.requireVerification)
   const [selectedCode, setSelectedCode] = useState<string | null>(initialUrlState.selectedCode)
   const [selectionFocus, setSelectionFocus] = useState(0)
   const [search, setSearch] = useState(initialUrlState.search)
@@ -121,6 +124,8 @@ export default function App() {
     replayRefreshKey,
     replayAnchorAt,
     mode === "live" ? live.liveUpdate : null,
+    access.verified,
+    access.requireVerification,
   )
 
   useEffect(() => {
@@ -216,7 +221,12 @@ export default function App() {
     ),
     [mode, replay.data, replayCursor, selectedCode],
   )
-  const history = useStationHistory(mode === "live" ? selected?.code ?? null : null, range)
+  const history = useStationHistory(
+    mode === "live" ? selected?.code ?? null : null,
+    range,
+    access.verified,
+    access.requireVerification,
+  )
   const nearby = useMemo(() => {
     if (!selected) return []
     return stations
@@ -489,6 +499,16 @@ export default function App() {
           ))}
         </div>
       </div>
+
+      {!access.verified && (
+        <TurnstileGate
+          checked={access.checked}
+          error={access.error}
+          onRetry={access.retry}
+          onToken={access.verify}
+          siteKey={access.siteKey}
+        />
+      )}
 
       <Text className="sr-only" aria-live="polite">
         {selected ? `Station sélectionnée : ${selected.name}` : "Aucune station sélectionnée"}

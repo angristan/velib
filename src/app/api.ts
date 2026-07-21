@@ -337,6 +337,21 @@ export const decodeStationHistory = (
   return { stationCode, range, points }
 }
 
+export interface SessionStatus {
+  readonly verified: boolean
+  readonly turnstileSiteKey: string
+}
+
+export class ApiRequestError extends Error {
+  readonly status: number
+
+  constructor(status: number, message: string) {
+    super(message)
+    this.name = "ApiRequestError"
+    this.status = status
+  }
+}
+
 const errorMessage = async (response: Response): Promise<string> => {
   const fallback = `La requête a échoué (${response.status})`
   try {
@@ -366,7 +381,9 @@ export const fetchLiveData = async (
   })
 
   if (response.status === 204 || response.status === 404) return null
-  if (!response.ok) throw new Error(await errorMessage(response))
+  if (!response.ok) {
+    throw new ApiRequestError(response.status, await errorMessage(response))
+  }
 
   const body: unknown = await response.json()
   return decodeLiveData(body)
@@ -384,7 +401,9 @@ export const fetchReplayData = async (
   })
 
   if (response.status === 204 || response.status === 404) return null
-  if (!response.ok) throw new Error(await errorMessage(response))
+  if (!response.ok) {
+    throw new ApiRequestError(response.status, await errorMessage(response))
+  }
 
   const body: unknown = await response.json()
   const replay = decodeReplayData(body)
@@ -406,8 +425,55 @@ export const fetchStationHistory = async (
   if (response.status === 204 || response.status === 404) {
     return { stationCode, range, points: [] }
   }
-  if (!response.ok) throw new Error(await errorMessage(response))
+  if (!response.ok) {
+    throw new ApiRequestError(response.status, await errorMessage(response))
+  }
 
   const body: unknown = await response.json()
   return decodeStationHistory(body, stationCode, range)
+}
+
+export const fetchSessionStatus = async (
+  signal: AbortSignal,
+): Promise<SessionStatus> => {
+  const response = await fetch("/api/session", {
+    cache: "no-store",
+    headers: { Accept: "application/json" },
+    signal,
+  })
+  if (!response.ok) {
+    throw new ApiRequestError(response.status, await errorMessage(response))
+  }
+
+  const body: unknown = await response.json()
+  const record = toRecord(body)
+  if (
+    record === undefined ||
+    typeof record.verified !== "boolean" ||
+    typeof record.turnstileSiteKey !== "string" ||
+    record.turnstileSiteKey.length === 0
+  ) throw new Error("La configuration de sécurité reçue est invalide")
+  return {
+    verified: record.verified,
+    turnstileSiteKey: record.turnstileSiteKey,
+  }
+}
+
+export const verifyTurnstile = async (
+  turnstileToken: string,
+  signal: AbortSignal,
+): Promise<void> => {
+  const response = await fetch("/api/session", {
+    method: "POST",
+    cache: "no-store",
+    headers: {
+      Accept: "application/json",
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ turnstileToken }),
+    signal,
+  })
+  if (!response.ok) {
+    throw new ApiRequestError(response.status, await errorMessage(response))
+  }
 }

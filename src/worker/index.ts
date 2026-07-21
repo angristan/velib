@@ -1,12 +1,20 @@
 import { Cause, Effect, Layer, ManagedRuntime } from "effect"
 
+import {
+  AccessControl,
+  type AccessEnv,
+  makeAccessControlLive,
+  RateLimitExceeded,
+  VerificationRequired
+} from "./access"
 import { collectMinute } from "./application"
 import { GbfsClientLive } from "./gbfs"
 import { LiveFeed } from "./live-feed"
 import { makeVelibRepositoryLive } from "./repository"
 import { handleRequest } from "./routes"
+import { type SessionCryptoError } from "./signing"
 
-export interface Env {
+export interface Env extends AccessEnv {
   readonly DB: D1Database
   readonly LIVE_FEED: DurableObjectNamespace<LiveFeed>
 }
@@ -17,7 +25,8 @@ const makeRuntime = (env: Env) =>
   ManagedRuntime.make(
     Layer.mergeAll(
       GbfsClientLive,
-      makeVelibRepositoryLive(env.DB)
+      makeVelibRepositoryLive(env.DB),
+      makeAccessControlLive(env)
     )
   )
 
@@ -73,6 +82,48 @@ const cacheKeyFor = (request: Request, url: URL): string | null => {
   return null
 }
 
+const accessErrorResponse = (
+  status: number,
+  code: string,
+  message: string,
+  retryAfter?: number
+): Response => {
+  const headers = new Headers({
+    "content-type": "application/json; charset=utf-8",
+    "cache-control": "no-store"
+  })
+  if (retryAfter !== undefined) headers.set("Retry-After", String(retryAfter))
+  return new Response(JSON.stringify({ error: { code, message } }), { status, headers })
+}
+
+const authorizeApiRequest = (request: Request) => {
+  const pathname = new URL(request.url).pathname
+  if (
+    !pathname.startsWith("/api/") ||
+    pathname === "/api/session" ||
+    pathname === "/api/health"
+  ) return Effect.succeed<Response | null>(null)
+
+  return Effect.gen(function*() {
+    const access = yield* AccessControl
+    yield* access.authorize(request)
+    return null
+  }).pipe(
+    Effect.catchTags({
+      VerificationRequired: (error: VerificationRequired) =>
+        Effect.succeed(accessErrorResponse(401, "verification_required", error.message)),
+      RateLimitExceeded: (error: RateLimitExceeded) =>
+        Effect.succeed(
+          accessErrorResponse(429, "rate_limited", error.message, error.retryAfter)
+        ),
+      SessionCryptoError: (error: SessionCryptoError) =>
+        Effect.logError("Session authorization failed", { cause: error.cause }).pipe(
+          Effect.as(accessErrorResponse(500, "session_unavailable", "Session is temporarily unavailable"))
+        )
+    })
+  )
+}
+
 const internalError = (): Response =>
   new Response(
     JSON.stringify({ error: { code: "internal_error", message: "Unexpected server error" } }),
@@ -88,6 +139,12 @@ const internalError = (): Response =>
 const worker: ExportedHandler<Env> = {
   async fetch(request, env, context) {
     const url = new URL(request.url)
+    const authorization = await runtimeFor(env).runPromise(
+      authorizeApiRequest(request),
+      { signal: request.signal }
+    )
+    if (authorization !== null) return authorization
+
     if (url.pathname === "/api/live/socket") {
       return env.LIVE_FEED.getByName("network").fetch(request)
     }
