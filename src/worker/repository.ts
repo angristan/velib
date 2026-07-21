@@ -1,6 +1,10 @@
 import { Context, Effect, Layer, Schema } from "effect"
 
-import { decodeSnapshotText, decompressSnapshot } from "./codec"
+import {
+  decodeSnapshotText,
+  decompressSnapshot,
+  type EncodedSnapshot
+} from "./codec"
 import {
   Aggregate,
   CollectionRecord,
@@ -43,6 +47,10 @@ const MetadataRow = Schema.Struct({
 const StateValueRow = Schema.Struct({ value: Schema.Number })
 const CompletionRow = Schema.Struct({ sample_count: Schema.Number })
 
+const LatestHeaderRow = Schema.Struct({
+  observed_at: Schema.Number,
+  source_updated_at: Schema.Number
+})
 const LatestRow = Schema.Struct({
   observed_at: Schema.Number,
   source_updated_at: Schema.Number,
@@ -93,6 +101,11 @@ const RunRow = Schema.Struct({
 })
 
 const CountRow = Schema.Struct({ count: Schema.Number })
+const RollupRepairRow = Schema.Struct({
+  bucket_at: Schema.Number,
+  snapshot_count: Schema.Number,
+  completed_sample_count: Schema.NullOr(Schema.Number)
+})
 const StationCodeRow = Schema.Struct({ station_code: Schema.Number })
 
 export class VelibRepository extends Context.Service<VelibRepository, {
@@ -104,9 +117,11 @@ export class VelibRepository extends Context.Service<VelibRepository, {
   ) => Effect.Effect<void, RepositoryError>
   readonly persistSnapshot: (
     record: SnapshotRecord,
-    compressed: ArrayBuffer
+    encoded: EncodedSnapshot
   ) => Effect.Effect<PersistSnapshotResult, RepositoryError>
-  readonly createRollup: (bucketAt: number) => Effect.Effect<void, RepositoryError>
+  readonly createRollups: (
+    bucketAts: ReadonlyArray<number>
+  ) => Effect.Effect<void, RepositoryError>
   readonly cleanup: (observedAt: number) => Effect.Effect<void, RepositoryError>
   readonly recordCollection: (record: CollectionRecord) => Effect.Effect<void, RepositoryError>
   readonly live: (now: number) => Effect.Effect<LiveResponse, RepositoryError | NotFoundError>
@@ -200,6 +215,8 @@ const metadataFromRow = (row: typeof MetadataRow.Type): StationMetadata =>
   })
 
 const makeRepository = (db: D1Database): VelibRepository["Service"] => {
+  let latestCache: SnapshotRecord | null = null
+
   const loadMetadata = Effect.fn("VelibRepository.loadMetadata")(function*() {
     const rows = yield* allRows(
       db.prepare(
@@ -249,15 +266,50 @@ const makeRepository = (db: D1Database): VelibRepository["Service"] => {
     return metadataFromRow(decoded)
   })
 
+  const loadLatestHeader = Effect.fn("VelibRepository.loadLatestHeader")(function*() {
+    const row = yield* firstRow(
+      db.prepare("SELECT observed_at, source_updated_at FROM latest_status WHERE singleton = 1"),
+      "loadLatestHeader"
+    )
+    if (row === null) return null
+    return yield* decodeRows(LatestHeaderRow, row, "loadLatestHeader")
+  })
+
   const loadLatest = Effect.fn("VelibRepository.loadLatest")(function*() {
     const row = yield* firstRow(
       db.prepare("SELECT observed_at, source_updated_at, payload FROM latest_status WHERE singleton = 1"),
       "loadLatest"
     )
-    if (row === null) {
+    if (row === null) return null
+    return yield* decodeRows(LatestRow, row, "loadLatest")
+  })
+
+  const loadLatestRecord = Effect.fn("VelibRepository.loadLatestRecord")(function*() {
+    const header = yield* loadLatestHeader()
+    if (header === null) {
+      latestCache = null
       return null
     }
-    return yield* decodeRows(LatestRow, row, "loadLatest")
+    if (
+      latestCache !== null &&
+      latestCache.observedAt === header.observed_at &&
+      latestCache.sourceUpdatedAt === header.source_updated_at
+    ) return latestCache
+
+    const latest = yield* loadLatest()
+    if (latest === null) {
+      latestCache = null
+      return null
+    }
+    const snapshot = yield* decodeSnapshotText(latest.payload).pipe(
+      Effect.mapError((cause) => decodeError("decodePreviousLatest", cause))
+    )
+    latestCache = {
+      observedAt: latest.observed_at,
+      sourceUpdatedAt: latest.source_updated_at,
+      snapshot
+    }
+    return latestCache
   })
 
   const runBatches = Effect.fn("VelibRepository.runBatches")(function*(
@@ -344,29 +396,14 @@ const makeRepository = (db: D1Database): VelibRepository["Service"] => {
 
   const persistSnapshot = Effect.fn("VelibRepository.persistSnapshot")(function*(
     record: SnapshotRecord,
-    compressed: ArrayBuffer
+    encoded: EncodedSnapshot
   ) {
-    const previous = yield* loadLatest()
+    const previous = yield* loadLatestRecord()
     const status: CollectionStatus = previous !== null && (
-      record.observedAt <= previous.observed_at ||
-      record.sourceUpdatedAt <= previous.source_updated_at
+      record.observedAt <= previous.observedAt ||
+      record.sourceUpdatedAt <= previous.sourceUpdatedAt
     ) ? "stale" : "ok"
-    let previousRecord: SnapshotRecord | null = null
-    if (previous !== null) {
-      const previousSnapshot = yield* decodeSnapshotText(previous.payload).pipe(
-        Effect.mapError((cause) => decodeError("decodePreviousLatest", cause))
-      )
-      previousRecord = {
-        observedAt: previous.observed_at,
-        sourceUpdatedAt: previous.source_updated_at,
-        snapshot: previousSnapshot
-      }
-    }
-    if (status === "stale") {
-      return { status, previous: previousRecord }
-    }
-
-    const payload = yield* stringify(record.snapshot, "serializeLatest")
+    if (status === "stale") return { status, previous }
 
     yield* runBatches(
       [
@@ -374,7 +411,12 @@ const makeRepository = (db: D1Database): VelibRepository["Service"] => {
           `INSERT OR IGNORE INTO minute_snapshots
              (observed_at, source_updated_at, station_count, payload)
            VALUES (?, ?, ?, ?)`
-        ).bind(record.observedAt, record.sourceUpdatedAt, record.snapshot.s.length, compressed),
+        ).bind(
+          record.observedAt,
+          record.sourceUpdatedAt,
+          record.snapshot.s.length,
+          encoded.compressed
+        ),
         db.prepare(
           `INSERT INTO latest_status (singleton, observed_at, source_updated_at, payload)
            VALUES (1, ?, ?, ?)
@@ -384,12 +426,13 @@ const makeRepository = (db: D1Database): VelibRepository["Service"] => {
              payload = excluded.payload
            WHERE excluded.observed_at > latest_status.observed_at
              AND excluded.source_updated_at > latest_status.source_updated_at`
-        ).bind(record.observedAt, record.sourceUpdatedAt, payload)
+        ).bind(record.observedAt, record.sourceUpdatedAt, encoded.text)
       ],
       "persistSnapshot"
     )
 
-    return { status, previous: previousRecord }
+    latestCache = record
+    return { status, previous }
   })
 
   const loadSnapshots = Effect.fn("VelibRepository.loadSnapshots")(function*(from: number, to: number) {
@@ -415,31 +458,7 @@ const makeRepository = (db: D1Database): VelibRepository["Service"] => {
     )
   })
 
-  const createRollup = Effect.fn("VelibRepository.createRollup")(function*(bucketAt: number) {
-    const snapshotCountInput = yield* firstRow(
-      db.prepare(
-        "SELECT COUNT(*) AS count FROM minute_snapshots WHERE observed_at >= ? AND observed_at < ?"
-      ).bind(bucketAt, bucketAt + ROLLUP_SECONDS),
-      "createRollup.snapshotCount"
-    )
-    const snapshotCount = snapshotCountInput === null
-      ? 0
-      : (yield* decodeRows(CountRow, snapshotCountInput, "createRollup.snapshotCount")).count
-    const completionInput = yield* firstRow(
-      db.prepare(
-        "SELECT sample_count FROM completed_rollups WHERE bucket_at = ?"
-      ).bind(bucketAt),
-      "createRollup.completion"
-    )
-    if (completionInput !== null) {
-      const completion = yield* decodeRows(
-        CompletionRow,
-        completionInput,
-        "createRollup.completion"
-      )
-      if (completion.sample_count >= snapshotCount) return
-    }
-
+  const writeRollup = Effect.fn("VelibRepository.writeRollup")(function*(bucketAt: number) {
     const snapshots = yield* loadSnapshots(bucketAt, bucketAt + ROLLUP_SECONDS)
     if (snapshots.length === 0) {
       yield* runStatement(
@@ -530,7 +549,49 @@ const makeRepository = (db: D1Database): VelibRepository["Service"] => {
            sample_count = excluded.sample_count`
       ).bind(bucketAt, bucketAt + ROLLUP_SECONDS, snapshots.length)
     )
-    yield* runBatches(statements, "createRollup")
+    yield* runBatches(statements, "writeRollup")
+  })
+
+  const createRollups = Effect.fn("VelibRepository.createRollups")(function*(
+    bucketAts: ReadonlyArray<number>
+  ) {
+    if (bucketAts.length === 0) return
+    const requested = bucketAts.map(() => "(?)").join(", ")
+    const rows = yield* allRows(
+      db.prepare(
+        `WITH requested(bucket_at) AS (VALUES ${requested}),
+         snapshot_counts AS (
+           SELECT requested.bucket_at, COUNT(snapshots.observed_at) AS snapshot_count
+           FROM requested
+           LEFT JOIN minute_snapshots AS snapshots
+             ON snapshots.observed_at >= requested.bucket_at
+            AND snapshots.observed_at < requested.bucket_at + ${ROLLUP_SECONDS}
+           GROUP BY requested.bucket_at
+         )
+         SELECT snapshot_counts.bucket_at,
+                snapshot_counts.snapshot_count,
+                completed.sample_count AS completed_sample_count
+         FROM snapshot_counts
+         LEFT JOIN completed_rollups AS completed
+           ON completed.bucket_at = snapshot_counts.bucket_at
+         ORDER BY snapshot_counts.bucket_at DESC`
+      ).bind(...bucketAts),
+      "createRollups.discover"
+    )
+    const states = yield* decodeRows(
+      Schema.Array(RollupRepairRow),
+      rows,
+      "createRollups.discover"
+    )
+    const pending = states.filter((state) =>
+      state.completed_sample_count === null ||
+      state.completed_sample_count < state.snapshot_count
+    )
+    yield* Effect.forEach(
+      pending,
+      (state) => writeRollup(state.bucket_at),
+      { discard: true }
+    )
   })
 
   const cleanup = Effect.fn("VelibRepository.cleanup")(function*(observedAt: number) {
@@ -880,7 +941,7 @@ const makeRepository = (db: D1Database): VelibRepository["Service"] => {
     needsMetadata,
     syncMetadata,
     persistSnapshot,
-    createRollup,
+    createRollups,
     cleanup,
     recordCollection,
     live: buildLive,

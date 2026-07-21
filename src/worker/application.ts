@@ -1,6 +1,6 @@
 import { Effect } from "effect"
 
-import { compressSnapshot } from "./codec"
+import { encodeSnapshot } from "./codec"
 import {
   AppError,
   CollectionRecord,
@@ -60,8 +60,8 @@ export const collectMinute = Effect.fn("collectMinute")(function*(observedAt: nu
       sourceUpdatedAt: status.sourceUpdatedAt,
       snapshot
     }
-    const compressed = yield* compressSnapshot(snapshot)
-    const persisted = yield* repository.persistSnapshot(record, compressed)
+    const encoded = yield* encodeSnapshot(snapshot)
+    const persisted = yield* repository.persistSnapshot(record, encoded)
     const collectionStatus = persisted.status
     const liveUpdate = collectionStatus === "ok" && persisted.previous !== null
       ? deriveLiveUpdate(persisted.previous, record)
@@ -73,11 +73,7 @@ export const collectMinute = Effect.fn("collectMinute")(function*(observedAt: nu
         { length: 12 },
         (_, index) => observedAt - (index + 2) * ROLLUP_SECONDS
       )
-      yield* Effect.forEach(
-        recentBuckets,
-        (bucketAt) => repository.createRollup(bucketAt),
-        { discard: true }
-      )
+      yield* repository.createRollups(recentBuckets)
     }
     yield* repository.cleanup(observedAt)
 

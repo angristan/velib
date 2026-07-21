@@ -20,12 +20,16 @@ const encodeText = Effect.fn("SnapshotCodec.encodeText")(function*(snapshot: Com
   })
 })
 
-export const compressSnapshot = Effect.fn("SnapshotCodec.compress")(function*(snapshot: CompactSnapshot) {
-  const json = yield* encodeText(snapshot)
+export interface EncodedSnapshot {
+  readonly text: string
+  readonly compressed: ArrayBuffer
+}
 
-  return yield* Effect.tryPromise({
+export const encodeSnapshot = Effect.fn("SnapshotCodec.encode")(function*(snapshot: CompactSnapshot) {
+  const text = yield* encodeText(snapshot)
+  const compressed = yield* Effect.tryPromise({
     try: async () => {
-      const input = new Blob([new TextEncoder().encode(json)]).stream()
+      const input = new Blob([new TextEncoder().encode(text)]).stream()
       const output = input.pipeThrough(new CompressionStream("gzip"))
       return await new Response(output).arrayBuffer()
     },
@@ -36,6 +40,7 @@ export const compressSnapshot = Effect.fn("SnapshotCodec.compress")(function*(sn
         cause
       })
   })
+  return { text, compressed } satisfies EncodedSnapshot
 })
 
 export const decodeSnapshotText = Effect.fn("SnapshotCodec.decodeText")(function*(json: string) {
