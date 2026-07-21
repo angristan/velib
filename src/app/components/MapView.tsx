@@ -170,6 +170,7 @@ const addAvailabilityMarkerImages = (
   mapBackground: MapBackground,
 ): void => {
   const outlineColor = mapBackground === "dark" ? "#172237" : "#ffffff"
+  const docksColor = mapBackground === "dark" ? "#7188a5" : "#aeb6c3"
   const added = new Set<string>()
   for (const station of stations) {
     const name = `${mapBackground}-${availabilityMarkerKey(station)}`
@@ -182,7 +183,7 @@ const addAvailabilityMarkerImages = (
       [
         { units: bins.mechanical, color: "#27c196" },
         { units: bins.electric, color: "#2484fd" },
-        { units: bins.docks, color: "#aeb6c3" },
+        { units: bins.docks, color: docksColor },
       ],
       outlineColor,
     )
@@ -675,6 +676,12 @@ export const MapView = ({
           option === mapBackground ? "visible" : "none",
         )
       }
+      map.setPaintProperty(
+        "station-docks-badge",
+        "circle-color",
+        mapBackground === "dark" ? "#7188a5" : "#8a94a6",
+      )
+      map.resize()
     }
 
     if (map.loaded()) update()

@@ -482,6 +482,23 @@ ul { margin: 0; padding: 0; list-style: none; }
 [data-mantine-color-scheme="dark"] .live-variation { background: #172f52; }
 [data-mantine-color-scheme="dark"] .station-data-credit { background: #142036; }
 [data-mantine-color-scheme="dark"] .view-switcher-control { background: var(--surface); }
+[data-mantine-color-scheme="dark"] .replay-toolbar button,
+[data-mantine-color-scheme="dark"] .replay-deck button,
+[data-mantine-color-scheme="dark"] .map-caption,
+[data-mantine-color-scheme="dark"] .map-legend,
+[data-mantine-color-scheme="dark"] .live-map-update { color: var(--ink); background: #102640; }
+[data-mantine-color-scheme="dark"] .replay-toolbar button:hover,
+[data-mantine-color-scheme="dark"] .replay-deck button:hover { color: #cfe5ff; background: #183b64; }
+[data-mantine-color-scheme="dark"] .map-caption .mantine-Text-root:last-child,
+[data-mantine-color-scheme="dark"] .map-legend .legend-hint { color: var(--muted) !important; }
+[data-mantine-color-scheme="dark"] .map-legend .legend-dot--neutral { border-color: #c4d3e8; background: #7086a2; box-shadow: 0 0 0 1px rgba(112,134,162,.4); }
+[data-mantine-color-scheme="dark"] .map-legend .legend-dot--free-docks,
+[data-mantine-color-scheme="dark"] .map-legend .legend-icon--docks { background: #7188a5; color: #9fb4cf; }
+[data-mantine-color-scheme="dark"] .map-legend .legend-ring { background: #102640; }
+[data-mantine-color-scheme="dark"] .maplibregl-ctrl-group { border-color: #3d5d83 !important; background: #102640 !important; box-shadow: 0 3px 12px rgba(0,0,0,.32) !important; }
+[data-mantine-color-scheme="dark"] .maplibregl-ctrl-group button { filter: invert(1); }
+[data-mantine-color-scheme="dark"] .maplibregl-ctrl-attrib { color: var(--muted); background: rgba(16,38,64,.92) !important; }
+[data-mantine-color-scheme="dark"] .maplibregl-ctrl-attrib a { color: #9bcaff; }
 
 .mobile-view-switcher { display: none; }
 .view-option { display: flex; align-items: center; justify-content: center; gap: 7px; }
