@@ -389,7 +389,8 @@ export default function App() {
           <Suspense fallback={<div className="map-loading"><Text>Chargement de la carte…</Text></div>}>
             <MapView
               activityChanges={activityChanges}
-              initialCamera={initialUrlState.camera}
+              initialCamera={camera}
+              key={mapBackground}
               liveUpdate={displayedUpdate}
               locating={locating}
               mapBackground={mapBackground}
