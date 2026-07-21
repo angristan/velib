@@ -70,7 +70,11 @@ export const useLiveData = (
       try {
         const reconcileKey = reconcileKeyRef.current
         reconcileKeyRef.current = null
-        const nextData = await fetchLiveData(controller.signal, reconcileKey)
+        // The first snapshot must bypass browser and Worker caches. Later
+        // reconciliation polls may use the short-lived shared cache.
+        const nextData = lastLoadedAt === 0 && reconcileKey === null
+          ? await fetchLiveData(controller.signal)
+          : await fetchLiveData(controller.signal, reconcileKey)
         const current = dataRef.current
         if (
           nextData !== null &&

@@ -1,11 +1,36 @@
 import { assert, it } from "@effect/vitest"
+import { vi } from "vitest"
 
 import {
   decodeLiveData,
   decodeLiveUpdate,
   decodeReplayData,
   decodeStationHistory,
+  fetchLiveData,
 } from "./api"
+
+it("requests the uncached current live state by default", async () => {
+  const now = 1_784_625_123_456
+  vi.useFakeTimers()
+  vi.setSystemTime(now)
+  const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({
+    observedAt: 1_784_625_120,
+    sourceUpdatedAt: 1_784_625_100,
+    stations: [],
+  })))
+
+  try {
+    await fetchLiveData(new AbortController().signal)
+
+    const [path, init] = fetchMock.mock.calls[0] ?? []
+    const reconcileKey = Math.floor(now / 60_000) * 60_000
+    assert.strictEqual(path, `/api/live?reconcile=${reconcileKey}`)
+    assert.strictEqual(init?.cache, "no-store")
+  } finally {
+    fetchMock.mockRestore()
+    vi.useRealTimers()
+  }
+})
 
 it("decodes live Worker responses without inventing operational flags", () => {
   const decoded = decodeLiveData({

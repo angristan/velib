@@ -369,7 +369,7 @@ const errorMessage = async (response: Response): Promise<string> => {
 
 export const fetchLiveData = async (
   signal: AbortSignal,
-  reconcileKey: number | null = null,
+  reconcileKey: number | null = Math.floor(Date.now() / 60_000) * 60_000,
 ): Promise<LiveData | null> => {
   const path = reconcileKey === null
     ? "/api/live"
