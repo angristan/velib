@@ -1,0 +1,50 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "velib",
+  "main": "src/worker/index.ts",
+  "account_id": "47d71747660aab24284661867a77ed71",
+  "workers_dev": false,
+  "preview_urls": false,
+  "routes": [
+    {
+      "pattern": "velib.stanislas.cloud",
+      "custom_domain": true
+    }
+  ],
+  "compatibility_date": "2026-07-15",
+  "compatibility_flags": ["nodejs_compat"],
+  "triggers": {
+    "crons": ["* * * * *"]
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "velib",
+      "database_id": "6fd9d96a-8454-4b9c-95ee-19ad41c51ed6",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "LIVE_FEED",
+        "class_name": "LiveFeed"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["LiveFeed"]
+    }
+  ],
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 0.1
+  },
+  "assets": {
+    "directory": "./dist/client",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*"]
+  }
+}
