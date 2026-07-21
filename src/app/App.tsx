@@ -49,6 +49,7 @@ import type {
   UserLocation,
 } from "./types"
 import { stationMatchesFilter, stationMatchesQuery } from "./types"
+import { themeChangeFor } from "./theme"
 import { parseAppUrlState, serializeAppUrlState } from "./url-state"
 import { distanceInMeters } from "./utils"
 
@@ -320,8 +321,9 @@ export default function App() {
   }, [currentUrl, mode, playing, replay.data])
 
   const changeColorScheme = useCallback((nextColorScheme: MapBackground) => {
-    setMapBackground(nextColorScheme)
-    setColorScheme(nextColorScheme)
+    const themeChange = themeChangeFor(nextColorScheme)
+    setMapBackground(themeChange.mapBackground)
+    setColorScheme(themeChange.colorScheme)
   }, [setColorScheme])
 
   const share = useCallback(() => {
