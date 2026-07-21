@@ -1,4 +1,9 @@
-import { Alert, Text, useComputedColorScheme } from "@mantine/core"
+import {
+  Alert,
+  Text,
+  useComputedColorScheme,
+  useMantineColorScheme,
+} from "@mantine/core"
 import {
   IconChevronLeft,
   IconChevronRight,
@@ -34,6 +39,7 @@ import {
 import type {
   DataMode,
   HistoryRange,
+  MapBackground,
   MapCamera,
   MapMode,
   PlaybackSpeed,
@@ -74,6 +80,8 @@ const viewOptions: ReadonlyArray<{ value: MobileView; label: React.ReactNode }> 
 export default function App() {
   const initialUrlStateRef = useRef(parseAppUrlState(window.location.search))
   const initialUrlState = initialUrlStateRef.current
+  const { setColorScheme } = useMantineColorScheme()
+  const computedColorScheme = useComputedColorScheme("light")
   const live = useLiveData()
   const [selectedCode, setSelectedCode] = useState<string | null>(initialUrlState.selectedCode)
   const [selectionFocus, setSelectionFocus] = useState(0)
@@ -90,7 +98,7 @@ export default function App() {
   })
   const [mode, setMode] = useState<DataMode>(initialUrlState.mode)
   const [mapMode, setMapMode] = useState<MapMode>(initialUrlState.mapMode)
-  const mapBackground = useComputedColorScheme("light")
+  const [mapBackground, setMapBackground] = useState<MapBackground>(computedColorScheme)
   const [replayMinutes, setReplayMinutes] = useState<ReplayWindowMinutes>(
     initialUrlState.replayMinutes,
   )
@@ -113,6 +121,10 @@ export default function App() {
     replayAnchorAt,
     mode === "live" ? live.liveUpdate : null,
   )
+
+  useEffect(() => {
+    setMapBackground(computedColorScheme)
+  }, [computedColorScheme])
 
   useEffect(() => {
     try {
@@ -307,6 +319,11 @@ export default function App() {
     return () => window.clearTimeout(timeout)
   }, [currentUrl, mode, playing, replay.data])
 
+  const changeColorScheme = useCallback((nextColorScheme: MapBackground) => {
+    setMapBackground(nextColorScheme)
+    setColorScheme(nextColorScheme)
+  }, [setColorScheme])
+
   const share = useCallback(() => {
     const url = currentUrl()
     window.history.replaceState(null, "", url)
@@ -321,11 +338,13 @@ export default function App() {
   return (
     <div className="app-frame">
       <Header
+        colorScheme={mapBackground}
         connection={live.connection}
         data={presentedData}
         error={live.error}
         loading={live.loading || (mode === "replay" && replay.loading)}
         mode={mode}
+        onColorSchemeChange={changeColorScheme}
         onRefresh={live.refresh}
       />
 

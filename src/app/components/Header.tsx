@@ -5,8 +5,6 @@ import {
   Skeleton,
   Text,
   Tooltip,
-  useComputedColorScheme,
-  useMantineColorScheme,
 } from "@mantine/core"
 import {
   IconBike,
@@ -20,15 +18,22 @@ import {
   IconSun,
 } from "@tabler/icons-react"
 import { memo, useEffect, useMemo, useRef, useState } from "react"
-import type { DataMode, LiveConnectionStatus, LiveData } from "../types"
+import type {
+  DataMode,
+  LiveConnectionStatus,
+  LiveData,
+  MapBackground,
+} from "../types"
 import { formatFreshness, formatNumber, formatTimestamp } from "../utils"
 
 interface HeaderProps {
+  readonly colorScheme: MapBackground
   readonly data: LiveData | null
   readonly loading: boolean
   readonly error: string | null
   readonly connection: LiveConnectionStatus
   readonly mode: DataMode
+  readonly onColorSchemeChange: (colorScheme: MapBackground) => void
   readonly onRefresh: () => void
 }
 
@@ -53,15 +58,15 @@ const Kpi = ({ icon, label, value, tone, pulse }: KpiProps) => (
 )
 
 export const Header = memo(function Header({
+  colorScheme,
   data,
   loading,
   error,
   connection,
   mode,
+  onColorSchemeChange,
   onRefresh,
 }: HeaderProps) {
-  const { setColorScheme } = useMantineColorScheme()
-  const colorScheme = useComputedColorScheme("light")
   const nextColorScheme = colorScheme === "dark" ? "light" : "dark"
   const themeLabel = colorScheme === "dark" ? "Passer au thème clair" : "Passer au thème sombre"
   const totals = useMemo(() => (data?.stations ?? []).reduce(
@@ -163,7 +168,7 @@ export const Header = memo(function Header({
           <ActionIcon
             aria-label={themeLabel}
             className="theme-toggle"
-            onClick={() => setColorScheme(nextColorScheme)}
+            onClick={() => onColorSchemeChange(nextColorScheme)}
             size="lg"
             variant="subtle"
           >
