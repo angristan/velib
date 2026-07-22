@@ -1,5 +1,15 @@
 import { env } from "cloudflare:workers"
+import { Effect } from "effect"
 import { describe, expect, it } from "vitest"
+
+import { encodeSnapshot } from "./codec"
+import {
+  CompactSnapshot,
+  CompactStation,
+  RETENTION_SECONDS,
+  ROLLUP_SECONDS,
+} from "./domain"
+import { makeVelibRepositoryLive, VelibRepository } from "./repository"
 
 describe("Worker runtime bindings", () => {
   it("applies the real D1 migrations", async () => {
@@ -9,6 +19,74 @@ describe("Worker runtime bindings", () => {
 
     expect(tables.results.map(({ name }) => name)).toContain("stations")
     expect(tables.results.map(({ name }) => name)).toContain("minute_snapshots")
+  })
+
+  it("bulk upserts station rollups through real D1 JSON functions", async () => {
+    const bucketAt = 1_000_200
+    const stationCode = 990_001
+    const snapshot = CompactSnapshot.make({
+      v: 1,
+      s: [CompactStation.make({
+        c: stationCode,
+        m: 5,
+        e: 2,
+        d: 8,
+        o: 1,
+        r: bucketAt - 2,
+      })],
+    })
+    const encoded = await Effect.runPromise(encodeSnapshot(snapshot))
+
+    await env.DB.batch([
+      env.DB.prepare(
+        `INSERT INTO stations
+           (station_code, station_id, name, latitude, longitude, capacity, metadata_updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      ).bind(stationCode, String(stationCode), "Test station", 48.85, 2.35, 15, bucketAt),
+      env.DB.prepare(
+        `INSERT INTO minute_snapshots
+           (observed_at, source_updated_at, station_count, payload)
+         VALUES (?, ?, ?, ?)`,
+      ).bind(bucketAt, bucketAt - 2, 1, encoded.compressed),
+    ])
+
+    await Effect.runPromise(
+      Effect.gen(function*() {
+        const repository = yield* VelibRepository
+        yield* repository.createRollups([bucketAt])
+      }).pipe(Effect.provide(makeVelibRepositoryLive(env.DB))),
+    )
+
+    const rollup = await env.DB.prepare(
+      `SELECT sample_count, mechanical_avg, electric_avg, docks_avg, unavailable_avg,
+              operative_samples
+       FROM station_rollups_5m
+       WHERE station_code = ? AND bucket_at = ?`,
+    ).bind(stationCode, bucketAt).first<Record<string, number>>()
+    const completion = await env.DB.prepare(
+      "SELECT sample_count FROM completed_rollups WHERE bucket_at = ?",
+    ).bind(bucketAt).first<{ sample_count: number }>()
+
+    expect(rollup).toEqual({
+      sample_count: 1,
+      mechanical_avg: 5,
+      electric_avg: 2,
+      docks_avg: 8,
+      unavailable_avg: 0,
+      operative_samples: 1,
+    })
+    expect(completion?.sample_count).toBe(1)
+
+    await Effect.runPromise(
+      Effect.gen(function*() {
+        const repository = yield* VelibRepository
+        yield* repository.cleanup(bucketAt + RETENTION_SECONDS + ROLLUP_SECONDS)
+      }).pipe(Effect.provide(makeVelibRepositoryLive(env.DB))),
+    )
+    const cleaned = await env.DB.prepare(
+      "SELECT 1 FROM station_rollups_5m WHERE station_code = ? AND bucket_at = ?",
+    ).bind(stationCode, bucketAt).first()
+    expect(cleaned).toBeNull()
   })
 
   it("runs the LiveFeed Durable Object in Workerd", async () => {

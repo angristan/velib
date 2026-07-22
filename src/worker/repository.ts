@@ -106,7 +106,6 @@ const RollupRepairRow = Schema.Struct({
   snapshot_count: Schema.Number,
   completed_sample_count: Schema.NullOr(Schema.Number)
 })
-const StationCodeRow = Schema.Struct({ station_code: Schema.Number })
 
 export class VelibRepository extends Context.Service<VelibRepository, {
   readonly hasMetadata: () => Effect.Effect<boolean, RepositoryError>
@@ -226,30 +225,6 @@ const makeRepository = (db: D1Database): VelibRepository["Service"] => {
     )
     const decoded = yield* decodeRows(Schema.Array(MetadataRow), rows, "loadMetadata")
     return decoded.map(metadataFromRow)
-  })
-
-  const loadStationCodes = Effect.fn("VelibRepository.loadStationCodes")(function*() {
-    const rows = yield* allRows(
-      db.prepare("SELECT station_code FROM stations ORDER BY station_code"),
-      "loadStationCodes"
-    )
-    return yield* decodeRows(Schema.Array(StationCodeRow), rows, "loadStationCodes")
-  })
-
-  const loadCleanupStationCodes = Effect.fn("VelibRepository.loadCleanupStationCodes")(function*(
-    slot: number
-  ) {
-    const rows = yield* allRows(
-      db.prepare(
-        "SELECT station_code FROM stations WHERE station_code % 300 = ? ORDER BY station_code"
-      ).bind(slot),
-      "loadCleanupStationCodes"
-    )
-    return yield* decodeRows(
-      Schema.Array(StationCodeRow),
-      rows,
-      "loadCleanupStationCodes"
-    )
   })
 
   const loadMetadataStation = Effect.fn("VelibRepository.loadMetadataStation")(function*(code: number) {
@@ -458,8 +433,53 @@ const makeRepository = (db: D1Database): VelibRepository["Service"] => {
     )
   })
 
+  const loadRollupInputs = Effect.fn("VelibRepository.loadRollupInputs")(function*(
+    bucketAt: number
+  ) {
+    const [snapshotRows = [], metadataRows = []] = yield* Effect.tryPromise({
+      try: async () => {
+        const results = await db.batch<Record<string, unknown>>([
+          db.prepare(
+            `SELECT observed_at, source_updated_at, payload
+             FROM minute_snapshots
+             WHERE observed_at >= ? AND observed_at < ?
+             ORDER BY observed_at`
+          ).bind(bucketAt, bucketAt + ROLLUP_SECONDS),
+          db.prepare(
+            `SELECT station_code, station_id, name, latitude, longitude, capacity, metadata_updated_at
+             FROM stations
+             ORDER BY station_code`
+          )
+        ])
+        return results.map((result) => result.results)
+      },
+      catch: (cause) => repositoryError("loadRollupInputs", cause)
+    })
+    const decodedSnapshots = yield* decodeRows(
+      Schema.Array(SnapshotRow),
+      snapshotRows,
+      "loadRollupInputs.snapshots"
+    )
+    const snapshots = yield* Effect.forEach(decodedSnapshots, (row) =>
+      Effect.map(decompressSnapshot(row.payload), (snapshot) => ({
+        observedAt: row.observed_at,
+        sourceUpdatedAt: row.source_updated_at,
+        snapshot
+      })).pipe(
+        Effect.mapError((cause) => decodeError("loadRollupInputs.payload", cause))
+      )
+    )
+    const metadata = yield* decodeRows(
+      Schema.Array(MetadataRow),
+      metadataRows,
+      "loadRollupInputs.metadata"
+    )
+
+    return { snapshots, metadata: metadata.map(metadataFromRow) }
+  })
+
   const writeRollup = Effect.fn("VelibRepository.writeRollup")(function*(bucketAt: number) {
-    const snapshots = yield* loadSnapshots(bucketAt, bucketAt + ROLLUP_SECONDS)
+    const { snapshots, metadata } = yield* loadRollupInputs(bucketAt)
     if (snapshots.length === 0) {
       yield* runStatement(
         db.prepare(
@@ -472,47 +492,61 @@ const makeRepository = (db: D1Database): VelibRepository["Service"] => {
       )
       return
     }
-    const metadata = yield* loadMetadata()
-    const rollups = deriveRollups(bucketAt, snapshots, metadata)
-    const statements: Array<D1PreparedStatement> = []
 
-    for (let offset = 0; offset < rollups.stations.length; offset += 5) {
-      const chunk = rollups.stations.slice(offset, offset + 5)
-      const placeholders = chunk.map(() => "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").join(", ")
-      const values: Array<number> = []
-      for (const rollup of chunk) {
-        values.push(
-          rollup.stationCode,
-          rollup.bucketAt,
-          rollup.sampleCount,
-          rollup.mechanical.min,
-          rollup.mechanical.max,
-          rollup.mechanical.avg,
-          rollup.mechanicalRemoved,
-          rollup.mechanicalReturned,
-          rollup.electric.min,
-          rollup.electric.max,
-          rollup.electric.avg,
-          rollup.electricRemoved,
-          rollup.electricReturned,
-          rollup.docks.min,
-          rollup.docks.max,
-          rollup.docks.avg,
-          rollup.unavailable.min,
-          rollup.unavailable.max,
-          rollup.unavailable.avg,
-          rollup.operativeSamples
-        )
-      }
-      statements.push(
+    const rollups = deriveRollups(bucketAt, snapshots, metadata)
+    const stationPayload = yield* stringify(
+      rollups.stations.map((rollup) => [
+        rollup.stationCode,
+        rollup.bucketAt,
+        rollup.sampleCount,
+        rollup.mechanical.min,
+        rollup.mechanical.max,
+        rollup.mechanical.avg,
+        rollup.mechanicalRemoved,
+        rollup.mechanicalReturned,
+        rollup.electric.min,
+        rollup.electric.max,
+        rollup.electric.avg,
+        rollup.electricRemoved,
+        rollup.electricReturned,
+        rollup.docks.min,
+        rollup.docks.max,
+        rollup.docks.avg,
+        rollup.unavailable.min,
+        rollup.unavailable.max,
+        rollup.unavailable.avg,
+        rollup.operativeSamples
+      ]),
+      "serializeStationRollups"
+    )
+    const networkPayload = yield* stringify(rollups.network, "serializeNetworkRollup")
+
+    // One JSON bind bypasses D1's 100-parameter limit. `WHERE true` disambiguates
+    // SQLite's INSERT ... SELECT ... ON CONFLICT grammar.
+    yield* runBatches(
+      [
         db.prepare(
-          `INSERT INTO station_rollups_5m (
+          `WITH input AS (SELECT value AS row FROM json_each(?))
+           INSERT INTO station_rollups_5m (
              station_code, bucket_at, sample_count,
              mechanical_min, mechanical_max, mechanical_avg, mechanical_removed, mechanical_returned,
              electric_min, electric_max, electric_avg, electric_removed, electric_returned,
              docks_min, docks_max, docks_avg,
              unavailable_min, unavailable_max, unavailable_avg, operative_samples
-           ) VALUES ${placeholders}
+           )
+           SELECT
+             json_extract(row, '$[0]'), json_extract(row, '$[1]'),
+             json_extract(row, '$[2]'), json_extract(row, '$[3]'),
+             json_extract(row, '$[4]'), json_extract(row, '$[5]'),
+             json_extract(row, '$[6]'), json_extract(row, '$[7]'),
+             json_extract(row, '$[8]'), json_extract(row, '$[9]'),
+             json_extract(row, '$[10]'), json_extract(row, '$[11]'),
+             json_extract(row, '$[12]'), json_extract(row, '$[13]'),
+             json_extract(row, '$[14]'), json_extract(row, '$[15]'),
+             json_extract(row, '$[16]'), json_extract(row, '$[17]'),
+             json_extract(row, '$[18]'), json_extract(row, '$[19]')
+           FROM input
+           WHERE true
            ON CONFLICT(station_code, bucket_at) DO UPDATE SET
              sample_count = excluded.sample_count,
              mechanical_min = excluded.mechanical_min,
@@ -532,24 +566,20 @@ const makeRepository = (db: D1Database): VelibRepository["Service"] => {
              unavailable_max = excluded.unavailable_max,
              unavailable_avg = excluded.unavailable_avg,
              operative_samples = excluded.operative_samples`
-        ).bind(...values)
-      )
-    }
-
-    const networkPayload = yield* stringify(rollups.network, "serializeNetworkRollup")
-    statements.push(
-      db.prepare(
-        `INSERT INTO network_rollups_5m (bucket_at, payload) VALUES (?, ?)
-         ON CONFLICT(bucket_at) DO UPDATE SET payload = excluded.payload`
-      ).bind(bucketAt, networkPayload),
-      db.prepare(
-        `INSERT INTO completed_rollups (bucket_at, completed_at, sample_count) VALUES (?, ?, ?)
-         ON CONFLICT(bucket_at) DO UPDATE SET
-           completed_at = excluded.completed_at,
-           sample_count = excluded.sample_count`
-      ).bind(bucketAt, bucketAt + ROLLUP_SECONDS, snapshots.length)
+        ).bind(stationPayload),
+        db.prepare(
+          `INSERT INTO network_rollups_5m (bucket_at, payload) VALUES (?, ?)
+           ON CONFLICT(bucket_at) DO UPDATE SET payload = excluded.payload`
+        ).bind(bucketAt, networkPayload),
+        db.prepare(
+          `INSERT INTO completed_rollups (bucket_at, completed_at, sample_count) VALUES (?, ?, ?)
+           ON CONFLICT(bucket_at) DO UPDATE SET
+             completed_at = excluded.completed_at,
+             sample_count = excluded.sample_count`
+        ).bind(bucketAt, bucketAt + ROLLUP_SECONDS, snapshots.length)
+      ],
+      "writeRollup"
     )
-    yield* runBatches(statements, "writeRollup")
   })
 
   const createRollups = Effect.fn("VelibRepository.createRollups")(function*(
@@ -596,43 +626,29 @@ const makeRepository = (db: D1Database): VelibRepository["Service"] => {
 
   const cleanup = Effect.fn("VelibRepository.cleanup")(function*(observedAt: number) {
     const cutoff = observedAt - RETENTION_SECONDS
+    const cleanupSlot = Math.floor(observedAt / MINUTE_SECONDS) % 300
     const statements: Array<D1PreparedStatement> = [
       db.prepare("DELETE FROM minute_snapshots WHERE observed_at < ?").bind(cutoff),
       db.prepare("DELETE FROM collection_runs WHERE observed_at < ?").bind(cutoff),
       db.prepare("DELETE FROM network_rollups_5m WHERE bucket_at < ?").bind(cutoff),
-      db.prepare("DELETE FROM completed_rollups WHERE bucket_at < ?").bind(cutoff)
+      db.prepare("DELETE FROM completed_rollups WHERE bucket_at < ?").bind(cutoff),
+      db.prepare(
+        `DELETE FROM station_rollups_5m
+         WHERE station_code IN (
+           SELECT station_code FROM stations WHERE station_code % 300 = ?
+         ) AND bucket_at < ?`
+      ).bind(cleanupSlot, cutoff)
     ]
-
-    const cleanupSlot = Math.floor(observedAt / MINUTE_SECONDS) % 300
-    const recoveryStations = yield* loadCleanupStationCodes(cleanupSlot)
-    if (recoveryStations.length > 0) {
-      const predicates = recoveryStations
-        .map(() => "(station_code = ? AND bucket_at < ?)")
-        .join(" OR ")
-      const values: Array<number> = []
-      for (const station of recoveryStations) {
-        values.push(station.station_code, cutoff)
-      }
-      statements.push(
-        db.prepare(`DELETE FROM station_rollups_5m WHERE ${predicates}`).bind(...values)
-      )
-    }
 
     if (observedAt % ROLLUP_SECONDS === 0) {
       const expiredBucket = observedAt - ROLLUP_SECONDS - RETENTION_SECONDS
-      const stationCodes = yield* loadStationCodes()
-
-      for (let offset = 0; offset < stationCodes.length; offset += 50) {
-        const chunk = stationCodes.slice(offset, offset + 50)
-        const predicates = chunk.map(() => "(station_code = ? AND bucket_at = ?)").join(" OR ")
-        const values: Array<number> = []
-        for (const station of chunk) {
-          values.push(station.station_code, expiredBucket)
-        }
-        statements.push(
-          db.prepare(`DELETE FROM station_rollups_5m WHERE ${predicates}`).bind(...values)
-        )
-      }
+      statements.push(
+        db.prepare(
+          `DELETE FROM station_rollups_5m
+           WHERE station_code IN (SELECT station_code FROM stations)
+             AND bucket_at = ?`
+        ).bind(expiredBucket)
+      )
     }
     yield* runBatches(statements, "cleanup")
   })

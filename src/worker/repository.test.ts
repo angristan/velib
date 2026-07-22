@@ -2,7 +2,13 @@ import { assert, it } from "@effect/vitest"
 import { Effect } from "effect"
 
 import { encodeSnapshot } from "./codec"
-import { CompactSnapshot, CompactStation, type SnapshotRecord } from "./domain"
+import {
+  CompactSnapshot,
+  CompactStation,
+  RETENTION_SECONDS,
+  ROLLUP_SECONDS,
+  type SnapshotRecord
+} from "./domain"
 import { makeVelibRepositoryLive, VelibRepository } from "./repository"
 
 interface FakeStatement extends D1PreparedStatement {
@@ -14,7 +20,9 @@ interface FakeDatabaseHandlers {
   readonly first?: (sql: string, values: readonly unknown[]) => unknown | null
   readonly all?: (sql: string, values: readonly unknown[]) => readonly unknown[]
   readonly run?: (sql: string, values: readonly unknown[]) => void
-  readonly batch?: (statements: readonly FakeStatement[]) => void
+  readonly batch?: (
+    statements: readonly FakeStatement[]
+  ) => ReadonlyArray<ReadonlyArray<unknown>> | void
 }
 
 const fakeResult = <T>(results: readonly T[] = []): D1Result<T> =>
@@ -37,8 +45,11 @@ const makeFakeDatabase = (handlers: FakeDatabaseHandlers): D1Database => {
   return {
     prepare: (sql: string) => makeStatement(sql),
     batch: async <T>(statements: D1PreparedStatement[]) => {
-      handlers.batch?.(statements as unknown as readonly FakeStatement[])
-      return statements.map(() => fakeResult<T>())
+      const handled = handlers.batch?.(statements as unknown as readonly FakeStatement[])
+      const rowsByStatement = handled === undefined ? [] : handled
+      return statements.map((_, index) =>
+        fakeResult((rowsByStatement[index] ?? []) as readonly T[])
+      )
     },
   } as unknown as D1Database
 }
@@ -133,8 +144,10 @@ it.effect("discovers all rollup repairs with one D1 query", () => {
           { bucket_at: 2_400, snapshot_count: 4, completed_sample_count: 4 },
         ]
       }
-      if (sql.includes("FROM minute_snapshots")) return []
       throw new Error(`Unexpected query: ${sql}`)
+    },
+    batch: (statements) => {
+      if (statements[0]?.sql.includes("FROM minute_snapshots")) return [[], []]
     },
     run: (sql, values) => {
       if (sql.includes("INSERT INTO completed_rollups")) {
@@ -149,5 +162,100 @@ it.effect("discovers all rollup repairs with one D1 query", () => {
 
     assert.strictEqual(discoveryQueries, 1)
     assert.deepEqual(completedEmptyBuckets, [2_700])
+  }).pipe(Effect.provide(makeVelibRepositoryLive(db)))
+})
+
+it.effect("writes a station rollup with one JSON-backed D1 batch", () =>
+  Effect.gen(function*() {
+    const bucketAt = 3_000
+    const record = snapshotRecord(bucketAt, 5)
+    const encoded = yield* encodeSnapshot(record.snapshot)
+    let inputBatches = 0
+    const writeBatches: Array<ReadonlyArray<FakeStatement>> = []
+    const db = makeFakeDatabase({
+      all: (sql) => {
+        if (sql.includes("WITH requested(bucket_at)")) {
+          return [{ bucket_at: bucketAt, snapshot_count: 1, completed_sample_count: null }]
+        }
+        throw new Error(`Unexpected query: ${sql}`)
+      },
+      batch: (statements) => {
+        if (statements[0]?.sql.includes("FROM minute_snapshots")) {
+          inputBatches += 1
+          return [
+            [{
+              observed_at: record.observedAt,
+              source_updated_at: record.sourceUpdatedAt,
+              payload: encoded.compressed
+            }],
+            [{
+              station_code: 2009,
+              station_id: "2009",
+              name: "Test station",
+              latitude: 48.85,
+              longitude: 2.35,
+              capacity: 15,
+              metadata_updated_at: bucketAt
+            }]
+          ]
+        }
+        writeBatches.push(statements)
+      }
+    })
+
+    yield* Effect.gen(function*() {
+      const repository = yield* VelibRepository
+      yield* repository.createRollups([bucketAt])
+    }).pipe(Effect.provide(makeVelibRepositoryLive(db)))
+
+    assert.strictEqual(inputBatches, 1)
+    assert.strictEqual(writeBatches.length, 1)
+    assert.strictEqual(writeBatches[0]?.length, 3)
+    const stationWrite = writeBatches[0]?.[0]
+    assert.isDefined(stationWrite)
+    assert.include(stationWrite.sql, "json_each(?)")
+    assert.notInclude(stationWrite.sql, "VALUES (?,")
+    assert.deepEqual(JSON.parse(stationWrite.values[0] as string), [[
+      2009, bucketAt, 1,
+      5, 5, 5, 0, 0,
+      2, 2, 2, 0, 0,
+      8, 8, 8,
+      0, 0, 0, 1
+    ]])
+  })
+)
+
+it.effect("runs cleanup without station lookup round trips", () => {
+  const observedAt = RETENTION_SECONDS + ROLLUP_SECONDS * 2
+  const batches: Array<ReadonlyArray<FakeStatement>> = []
+  const db = makeFakeDatabase({
+    all: (sql) => {
+      throw new Error(`Unexpected cleanup query: ${sql}`)
+    },
+    batch: (statements) => {
+      batches.push(statements)
+    }
+  })
+
+  return Effect.gen(function*() {
+    const repository = yield* VelibRepository
+    yield* repository.cleanup(observedAt)
+
+    assert.strictEqual(batches.length, 1)
+    assert.strictEqual(batches[0]?.length, 6)
+    const rotatingCleanup = batches[0]?.[4]
+    const bucketCleanup = batches[0]?.[5]
+    assert.isDefined(rotatingCleanup)
+    assert.isDefined(bucketCleanup)
+    assert.include(rotatingCleanup.sql, "station_code IN")
+    assert.include(rotatingCleanup.sql, "station_code % 300 = ?")
+    assert.deepEqual(rotatingCleanup.values, [
+      Math.floor(observedAt / 60) % 300,
+      observedAt - RETENTION_SECONDS
+    ])
+    assert.include(bucketCleanup.sql, "station_code IN (SELECT station_code FROM stations)")
+    assert.deepEqual(bucketCleanup.values, [
+      observedAt - ROLLUP_SECONDS - RETENTION_SECONDS
+    ])
   }).pipe(Effect.provide(makeVelibRepositoryLive(db)))
 })
