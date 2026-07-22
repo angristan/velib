@@ -12,6 +12,9 @@
     }
   ],
   "compatibility_date": "2026-07-15",
+  "placement": {
+    "mode": "smart"
+  },
   "triggers": {
     "crons": ["* * * * *"]
   },
