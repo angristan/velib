@@ -14,6 +14,12 @@ import {
   RETENTION_SECONDS,
 } from "./domain"
 import { VelibRepository } from "./repository"
+import {
+  openReplayCache,
+  readReplayCache,
+  replayCacheKey,
+  writeReplayCache,
+} from "./replay-cache"
 
 const jsonResponse = (
   value: unknown,
@@ -185,8 +191,30 @@ const routeRequest = Effect.fn("routeRequest")(function*(request: Request) {
     yield* validateSearchParams(url, replaySearchParams)
     const minutes = yield* parseReplayMinutes(url.searchParams.get("minutes"))
     const at = yield* parseReplayAt(url.searchParams.get("at"), now)
-    const cacheControl = at === null ? "public, max-age=30" : "public, max-age=300"
-    return jsonResponse(yield* repository.replay(minutes, now, at), 200, cacheControl)
+    const latestSourceUpdatedAt = at ?? (yield* repository.latestSourceUpdatedAt())
+    const cache = latestSourceUpdatedAt === null ? null : yield* Effect.promise(openReplayCache)
+    const cacheKey = latestSourceUpdatedAt === null
+      ? null
+      : replayCacheKey(request.url, minutes, latestSourceUpdatedAt)
+
+    if (cache !== null && cacheKey !== null) {
+      const cached = yield* Effect.promise(() => readReplayCache(cache, cacheKey))
+      if (cached !== undefined) {
+        cached.headers.set("x-replay-cache", "hit")
+        return cached
+      }
+    }
+
+    const replay = yield* repository.replay(minutes, now, at)
+    const response = jsonResponse(replay)
+    response.headers.set("x-replay-cache", cache === null ? "bypass" : "miss")
+    if (cache !== null) {
+      const responseEndSourceUpdatedAt = replay.frames.at(-1)?.sourceUpdatedAt ??
+        replay.baseline.sourceUpdatedAt
+      const responseCacheKey = replayCacheKey(request.url, minutes, responseEndSourceUpdatedAt)
+      yield* Effect.promise(() => writeReplayCache(cache, responseCacheKey, response))
+    }
+    return response
   }
 
   const parts = url.pathname.split("/").filter((part) => part.length > 0)

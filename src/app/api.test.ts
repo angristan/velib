@@ -7,6 +7,7 @@ import {
   decodeReplayData,
   decodeStationHistory,
   fetchLiveData,
+  fetchReplayData,
 } from "./api"
 
 it("requests the uncached current live state by default", async () => {
@@ -29,6 +30,22 @@ it("requests the uncached current live state by default", async () => {
   } finally {
     fetchMock.mockRestore()
     vi.useRealTimers()
+  }
+})
+
+it("always requests replay through the Worker cache", async () => {
+  const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+    new Response(null, { status: 404 }),
+  )
+
+  try {
+    await fetchReplayData(30, null, new AbortController().signal)
+
+    const [path, init] = fetchMock.mock.calls[0] ?? []
+    assert.strictEqual(path, "/api/replay?minutes=30")
+    assert.strictEqual(init?.cache, "no-store")
+  } finally {
+    fetchMock.mockRestore()
   }
 })
 

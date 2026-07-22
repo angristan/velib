@@ -396,6 +396,7 @@ export const fetchReplayData = async (
 ): Promise<ReplayData | null> => {
   const at = anchorAt === null ? "" : `&at=${Math.round(anchorAt / 1_000)}`
   const response = await fetch(`/api/replay?minutes=${minutes}${at}`, {
+    cache: "no-store",
     headers: { Accept: "application/json" },
     signal,
   })

@@ -130,6 +130,7 @@ export class VelibRepository extends Context.Service<VelibRepository, {
     range: HistoryRange,
     now: number
   ) => Effect.Effect<HistoryResponse, RepositoryError | NotFoundError>
+  readonly latestSourceUpdatedAt: () => Effect.Effect<number | null, RepositoryError>
   readonly replay: (
     minutes: ReplayWindowMinutes,
     now: number,
@@ -859,6 +860,11 @@ const makeRepository = (db: D1Database): VelibRepository["Service"] => {
     }
   })
 
+  const latestSourceUpdatedAt = Effect.fn("VelibRepository.latestSourceUpdatedAt")(function*() {
+    const latest = yield* loadLatestHeader()
+    return latest?.source_updated_at ?? null
+  })
+
   const replay = Effect.fn("VelibRepository.replay")(function*(
     minutes: ReplayWindowMinutes,
     now: number,
@@ -963,6 +969,7 @@ const makeRepository = (db: D1Database): VelibRepository["Service"] => {
     live: buildLive,
     station,
     history,
+    latestSourceUpdatedAt,
     replay,
     health
   }

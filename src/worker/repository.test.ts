@@ -122,9 +122,11 @@ it.effect("validates the authoritative latest header before reusing the warm sna
 
     const firstResult = yield* repository.persistSnapshot(first, firstEncoded)
     const secondResult = yield* repository.persistSnapshot(second, secondEncoded)
+    const latestTimestamp = yield* repository.latestSourceUpdatedAt()
 
     assert.deepEqual(firstResult.previous, initial)
     assert.deepEqual(secondResult.previous, first)
+    assert.strictEqual(latestTimestamp, second.sourceUpdatedAt)
     assert.strictEqual(fullPayloadReads, 1)
     assert.deepEqual(persistedPayloads, [firstEncoded.text, secondEncoded.text])
   }).pipe(Effect.provide(makeVelibRepositoryLive(db)))

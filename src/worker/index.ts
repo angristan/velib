@@ -61,18 +61,6 @@ const cacheKeyFor = (request: Request, url: URL): string | null => {
     canonical.searchParams.set("range", range)
     return canonical.toString()
   }
-  if (url.pathname === "/api/replay") {
-    if (!queryContainsOnly(url, new Set(["minutes", "at"]))) return null
-    const minutes = url.searchParams.get("minutes") ?? "15"
-    if (minutes !== "15" && minutes !== "30" && minutes !== "60") return null
-    canonical.searchParams.set("minutes", minutes)
-    const at = url.searchParams.get("at")
-    if (at !== null) {
-      if (!/^\d+$/.test(at)) return null
-      canonical.searchParams.set("at", at)
-    }
-    return canonical.toString()
-  }
   return null
 }
 
