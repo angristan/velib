@@ -10,6 +10,7 @@ import type { FeatureCollection, Point } from "geojson"
 import { GeoJSONSource, Map, Marker, NavigationControl } from "maplibre-gl"
 import type { MapLayerMouseEvent, StyleSpecification } from "maplibre-gl"
 import { useEffect, useRef, useState } from "react"
+import { updateWhenMapResourceAvailable } from "../map-readiness"
 import { availabilityBins, availabilityMarkerKey } from "../marker-style"
 import type {
   DataMode,
@@ -667,8 +668,14 @@ export const MapView = ({
       }
     }
 
-    if (map.loaded()) update()
-    else map.once("load", update)
+    return updateWhenMapResourceAvailable(
+      () => map.getSource("variations") instanceof GeoJSONSource,
+      update,
+      (listener) => {
+        map.once("load", listener)
+        return () => map.off("load", listener)
+      },
+    )
   }, [activityChanges, stations])
 
   useEffect(() => {
@@ -726,8 +733,14 @@ export const MapView = ({
       }
     }
 
-    if (map.loaded()) update()
-    else map.once("load", update)
+    return updateWhenMapResourceAvailable(
+      () => map.getLayer("variation-points") !== undefined,
+      update,
+      (listener) => {
+        map.once("load", listener)
+        return () => map.off("load", listener)
+      },
+    )
   }, [mapMode])
 
   useEffect(() => {
