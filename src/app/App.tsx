@@ -52,7 +52,7 @@ import type {
 } from "./types"
 import { stationMatchesFilter, stationMatchesQuery } from "./types"
 import { themeChangeFor } from "./theme"
-import { parseAppUrlState, serializeAppUrlState } from "./url-state"
+import { clearAppUrlState, parseAppUrlState, serializeAppUrlState } from "./url-state"
 import { distanceInMeters } from "./utils"
 
 const MapView = lazy(() =>
@@ -107,12 +107,12 @@ export default function App() {
     initialUrlState.replayMinutes,
   )
   const [replayCursor, setReplayCursor] = useState(0)
-  const [replayAnchorAt, setReplayAnchorAt] = useState<number | null>(initialUrlState.replayAt)
+  const [replayAnchorAt, setReplayAnchorAt] = useState<number | null>(null)
   const [playing, setPlaying] = useState(false)
   const [playbackSpeed, setPlaybackSpeed] = useState<PlaybackSpeed>(1)
   const [camera, setCamera] = useState<MapCamera>(initialUrlState.camera)
   const [shareConfirmed, setShareConfirmed] = useState(false)
-  const restoredReplayAtRef = useRef(initialUrlState.replayAt)
+  const restoredReplayAtRef = useRef<number | null>(null)
   const [userLocation, setUserLocation] = useState<UserLocation | null>(null)
   const [locating, setLocating] = useState(false)
   const [locationError, setLocationError] = useState<string | null>(null)
@@ -301,14 +301,19 @@ export default function App() {
     setPlaying(nextPlaying)
   }, [replay.data, replayCursor])
 
-  const replayAt = mode === "replay" ? replaySnapshot?.sourceUpdatedAt ?? null : null
-  const currentUrl = useCallback(() => serializeAppUrlState({
+  const changeCamera = useCallback((nextCamera: MapCamera, userInitiated: boolean) => {
+    setCamera(nextCamera)
+    if (userInitiated && window.location.search !== "") {
+      window.history.replaceState(null, "", clearAppUrlState(window.location.href))
+    }
+  }, [])
+
+  const shareUrl = useCallback(() => serializeAppUrlState({
     selectedCode,
     search,
     filter,
     mode,
     replayMinutes,
-    replayAt,
     mapMode,
     camera,
   }, window.location.href), [
@@ -316,19 +321,10 @@ export default function App() {
     filter,
     mapMode,
     mode,
-    replayAt,
     replayMinutes,
     search,
     selectedCode,
   ])
-
-  useEffect(() => {
-    if (playing || (mode === "replay" && replay.data === null)) return
-    const timeout = window.setTimeout(() => {
-      window.history.replaceState(null, "", currentUrl())
-    }, 350)
-    return () => window.clearTimeout(timeout)
-  }, [currentUrl, mode, playing, replay.data])
 
   const changeColorScheme = useCallback((nextColorScheme: MapBackground) => {
     const themeChange = themeChangeFor(nextColorScheme)
@@ -337,7 +333,7 @@ export default function App() {
   }, [setColorScheme])
 
   const share = useCallback(() => {
-    const url = currentUrl()
+    const url = shareUrl()
     window.history.replaceState(null, "", url)
     const copy = navigator.clipboard?.writeText(url)
     if (copy === undefined) return
@@ -345,7 +341,7 @@ export default function App() {
       setShareConfirmed(true)
       window.setTimeout(() => setShareConfirmed(false), 2_500)
     }).catch(() => undefined)
-  }, [currentUrl])
+  }, [shareUrl])
 
   return (
     <div className="app-frame">
@@ -426,7 +422,7 @@ export default function App() {
               mapBackground={mapBackground}
               mapMode={mapMode}
               mode={mode}
-              onCameraChange={setCamera}
+              onCameraChange={changeCamera}
               onLocate={locate}
               onSelect={selectStation}
               selected={selected}

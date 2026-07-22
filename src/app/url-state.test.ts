@@ -1,15 +1,27 @@
 import { assert, it } from "@effect/vitest"
 
-import { parseAppUrlState, serializeAppUrlState } from "./url-state"
+import { clearAppUrlState, parseAppUrlState, serializeAppUrlState } from "./url-state"
 
-it("round-trips durable replay and map state", () => {
+it("round-trips replay and map state without retaining timestamps", () => {
   const state = parseAppUrlState(
     "?station=1001&q=horloge&filter=electric&mode=replay&window=30&at=1784625060&layer=heatmap&lat=48.85600&lng=2.34200&z=15.25",
   )
   const url = serializeAppUrlState(state, "https://velib.example/")
-  const restored = parseAppUrlState(new URL(url).search)
+  const serialized = new URL(url)
+  const restored = parseAppUrlState(serialized.search)
 
+  assert.isFalse(serialized.searchParams.has("at"))
+  assert.strictEqual(serialized.searchParams.get("lat"), "48.85600")
+  assert.strictEqual(serialized.searchParams.get("lng"), "2.34200")
+  assert.strictEqual(serialized.searchParams.get("z"), "15.25")
   assert.deepEqual(restored, state)
+})
+
+it("clears shared query parameters without changing the page", () => {
+  assert.strictEqual(
+    clearAppUrlState("https://velib.example/?mode=replay&lat=48.85#map"),
+    "https://velib.example/#map",
+  )
 })
 
 it("rejects malformed enums, station IDs, and camera coordinates", () => {

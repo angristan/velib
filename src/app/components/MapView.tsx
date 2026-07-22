@@ -41,7 +41,7 @@ interface MapViewProps {
   readonly mapMode: MapMode
   readonly mapBackground: MapBackground
   readonly initialCamera: MapCamera
-  readonly onCameraChange: (camera: MapCamera) => void
+  readonly onCameraChange: (camera: MapCamera, userInitiated: boolean) => void
   readonly onSelect: (station: Station) => void
   readonly onLocate: () => void
 }
@@ -616,13 +616,13 @@ export const MapView = ({
     map.on("zoomend", () => {
       setShowBikeBreakdown(map.getZoom() >= 14)
     })
-    map.on("moveend", () => {
+    map.on("moveend", (event) => {
       const center = map.getCenter()
       cameraChangeRef.current({
         latitude: center.lat,
         longitude: center.lng,
         zoom: map.getZoom(),
-      })
+      }, event.originalEvent !== undefined)
     })
 
     const interactiveLayers = stationLayers

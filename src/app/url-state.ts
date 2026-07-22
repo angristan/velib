@@ -18,7 +18,6 @@ export interface AppUrlState {
   readonly filter: StationFilter
   readonly mode: DataMode
   readonly replayMinutes: ReplayWindowMinutes
-  readonly replayAt: number | null
   readonly mapMode: MapMode
   readonly camera: MapCamera
 }
@@ -71,10 +70,6 @@ export const parseAppUrlState = (search: string): AppUrlState => {
   const selectedCode = selectedInput !== null && /^\d{1,6}$/.test(selectedInput)
     ? selectedInput
     : null
-  const atSeconds = finiteNumber(params.get("at"))
-  const replayAt = atSeconds !== null && atSeconds > 0
-    ? Math.round(atSeconds * 1_000)
-    : null
 
   return {
     selectedCode,
@@ -82,10 +77,15 @@ export const parseAppUrlState = (search: string): AppUrlState => {
     filter: parseFilter(params.get("filter")),
     mode: params.get("mode") === "replay" ? "replay" : "live",
     replayMinutes: parseReplayMinutes(params.get("window")),
-    replayAt,
     mapMode: params.get("layer") === "heatmap" ? "heatmap" : "stations",
     camera: parseCamera(params),
   }
+}
+
+export const clearAppUrlState = (baseUrl: string): string => {
+  const url = new URL(baseUrl)
+  url.search = ""
+  return url.toString()
 }
 
 export const serializeAppUrlState = (
@@ -100,7 +100,6 @@ export const serializeAppUrlState = (
   if (state.mode === "replay") {
     params.set("mode", "replay")
     params.set("window", String(state.replayMinutes))
-    if (state.replayAt !== null) params.set("at", String(Math.round(state.replayAt / 1_000)))
   }
   if (state.mapMode === "heatmap") params.set("layer", "heatmap")
   params.set("lat", state.camera.latitude.toFixed(5))
