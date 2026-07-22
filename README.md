@@ -1,40 +1,26 @@
-# Vélib Pulse
+# Vélib’ Pulse
 
-A fast, map-first view of Vélib' Métropole availability with seven days of local history. The application runs entirely on Cloudflare Workers and D1; collection starts at deployment and does not require a backfill.
+A map-first view of Vélib’ Métropole availability, live network changes, and seven days of station history.
 
-**Live:** [velib.stanislas.cloud](https://velib.stanislas.cloud)
+[**Open Vélib’ Pulse →**](https://velib.stanislas.cloud)
 
-This is an independent, unofficial service and is not affiliated with Vélib’ Métropole or Smovengo.
+![Vélib’ Pulse — live Vélib’ Métropole availability](public/og-preview.png)
 
-## Architecture
+Vélib’ Pulse is an independent, unofficial service. It is not affiliated with Vélib’ Métropole or Smovengo.
 
-```text
-Vélib GBFS ── every minute ──▶ Cron Worker
-                                  │
-                  ┌───────────────┼─────────────────┐
-                  ▼               ▼                 ▼
-           latest status    gzip snapshots     5-minute rollups
-                  │
-                  ├──▶ Turnstile session + rate limit ──▶ Worker JSON API ──┐
-                  │                                                          ▼
-                  └── compact diff ──▶ LiveFeed Durable Object ── WebSockets
-                                             ▲                                │
-                                             └── verified session ─────────────┘
-                                                                              ▼
-                                                               React + Mantine + MapLibre
-```
+## Features
 
-- **Effect** owns boundary decoding, typed failures, services, layers, ingestion, and request workflows.
-- **D1 minute snapshots** retain compact, compressed source observations for seven days so rollups can be rebuilt.
-- **D1 station rollups** make station graphs inexpensive without a write-heavy row-per-station-per-minute model.
-- **LiveFeed Durable Object** broadcasts each compact network diff through hibernating WebSockets. D1 remains authoritative; the JSON API handles initial state and five-minute reconciliation.
-- **Bounded replay API** reads at most about 70 candidate minute snapshots, returns at most 61 timeline snapshots as one compact baseline plus sequential sparse diffs, and is edge-cached for reuse.
-- **Workers Static Assets** serves the interface; API responses carry cache directives for edge reuse.
-- **Managed Turnstile** creates a signed, 30-minute HttpOnly session before data access. Workers Rate Limiting bindings allow approximately 60 API requests per minute per verified random session and 20 verification attempts per minute per client address and Cloudflare location. Health and session bootstrap remain public.
+- Live availability for mechanical bikes, electric bikes, and open docks.
+- Map and station search with filters, nearby stations, and station history.
+- Live network updates over WebSockets without repeatedly downloading the full dataset.
+- Replay of the last 15, 30, or 60 minutes at multiple playback speeds.
+- A gain-and-loss heatmap and station-level availability streaks.
+- Shareable URLs that preserve the camera, filters, selection, map layer, and replay time.
+- Light and dark map themes with responsive desktop and mobile layouts.
 
-The interface can replay the latest 15, 30, or 60 minutes, switch to a gain/loss heatmap, show per-station streaks, and share a canonical URL containing the camera, filters, selection, layer, and replay timestamp. Live collection remains connected in the background while replay is frozen.
+## Quick start
 
-## Local development
+The project uses [Bun](https://bun.sh/) `1.3.9`. Cloudflare’s local runtime, D1 database, Durable Object, and test Turnstile credentials are configured by the repository.
 
 ```bash
 bun install
@@ -43,44 +29,64 @@ bun run db:migrate:local
 bun run dev
 ```
 
-The example environment uses Cloudflare's official test-only Turnstile keys. Never use them in production.
-
-The first scheduled collection can be triggered locally through Wrangler's scheduled endpoint:
+Open <http://localhost:5173>. The interface remains empty until the first successful collection. Trigger one through Wrangler’s local scheduled endpoint:
 
 ```bash
 curl "http://localhost:5173/cdn-cgi/handler/scheduled?cron=*+*+*+*+*"
 ```
 
-Until the first successful collection, the interface intentionally shows an empty state rather than demo data.
+The values in `.dev.vars.example` include Cloudflare’s official test-only Turnstile credentials. Never use them in production.
 
-## Validation
+## Development commands
 
-```bash
-bun run typecheck
-bun run test
-bun run build
+| Command | Purpose |
+| --- | --- |
+| `bun run dev` | Start the Vite and Workers development server |
+| `bun run check` | Run type checking, all tests, and the production build |
+| `bun run test:unit` | Run application and Worker unit tests |
+| `bun run test:workerd` | Run D1 and Durable Object integration tests in Workerd |
+| `bun run cf-typegen` | Regenerate `worker-configuration.d.ts` from Wrangler configuration |
+| `bun run cf-typegen:check` | Verify generated Worker bindings are current |
+| `bun run db:migrate:local` | Apply D1 migrations to the local database |
+
+CI additionally verifies a fresh local migration sequence and a Wrangler deployment dry run.
+
+## How it works
+
+```text
+Vélib’ GBFS ──▶ scheduled Worker ──▶ D1 snapshots and rollups
+                         │
+                         └──▶ LiveFeed Durable Object ──▶ WebSocket clients
+
+Browser ──▶ Turnstile session ──▶ Worker API ──▶ D1
+   └─────────────────────────────▶ LiveFeed WebSocket
 ```
+
+A scheduled Worker collects the official GBFS feeds every minute. D1 stores the latest network state, compressed minute snapshots, and five-minute rollups. The Worker API serves initial state, replay data, and station history. A hibernating Durable Object broadcasts compact changes to connected browsers while D1 remains authoritative.
+
+Effect provides boundary validation, typed failures, services, and request workflows. Workers Static Assets serves the React, Mantine, and MapLibre interface.
+
+For the storage model, data paths, caching, and access controls, see [Architecture](docs/architecture.md). For production configuration, deployment, rollback, and D1 recovery, see [Operations](docs/operations.md).
+
+## Project layout
+
+| Path | Contents |
+| --- | --- |
+| `src/app/` | React interface, map behavior, replay, and API client |
+| `src/worker/` | Worker routes, collection, D1 repository, and Durable Object |
+| `migrations/` | D1 schema migrations |
+| `public/` | Static metadata and preview assets |
+| `wrangler.jsonc` | Worker bindings, domain, cron, observability, and deployment configuration |
 
 ## Deployment
 
-The production D1 binding, Turnstile site key, native rate limiter, and `velib.stanislas.cloud` custom domain are declared in `wrangler.jsonc`. Production additionally requires the `TURNSTILE_SECRET_KEY` and `SESSION_SIGNING_SECRET` Worker secrets. Apply any pending migrations before deploying:
+Production uses a D1 database, a Durable Object, two Workers Rate Limiting bindings, Turnstile, Workers Static Assets, and the `velib.stanislas.cloud` custom domain. It also requires the `TURNSTILE_SECRET_KEY` and `SESSION_SIGNING_SECRET` Worker secrets.
 
-```bash
-bun run db:migrate:remote
-bun run deploy
-```
-
-The collector runs every minute. Retention combines cheap exact-key cleanup with bounded recovery passes, avoiding a write-heavy secondary timestamp index. The `LiveFeed` SQLite-class migration is applied by the Worker deployment.
-
-### Rollback and recovery
-
-Apply schema changes before code that requires them and use expand/backfill/contract migrations. A Worker rollback does not undo D1 or Durable Object migrations, so keep the previous Worker compatible with the migrated schema until rollback is no longer required.
-
-For an application-only regression, list deployments and roll back the Worker with the project-pinned Wrangler, then check `/api/health`, one station response, history, and the live feed. For data corruption, stop writes first and use the current D1 Time Travel recovery procedure from Cloudflare's documentation; rehearse restoration against a disposable database before changing the production binding. Record the deployment version, migration state, recovery point, and smoke-test results in the incident log.
+Do not deploy code that requires a schema migration before applying that migration. Follow the [deployment checklist](docs/operations.md#deploy) rather than invoking Wrangler directly.
 
 ## Data and attribution
 
-Availability and station metadata come from the [Vélib' Métropole GBFS open-data feeds](https://www.velib-metropole.fr/donnees-open-data-gbfs-du-service-velib-metropole), published under the French [Licence Ouverte 2.0](https://www.etalab.gouv.fr/licence-ouverte-open-licence/). The interface shows the effective source-update time. Map data is attributed in the interface by the configured basemap provider.
+Availability and station metadata come from the [Vélib’ Métropole GBFS open-data feeds](https://www.velib-metropole.fr/donnees-open-data-gbfs-du-service-velib-metropole), published under the French [Licence Ouverte 2.0](https://www.etalab.gouv.fr/licence-ouverte-open-licence/). The interface shows the effective source-update time. Map data is attributed in the interface by the configured basemap provider.
 
 ## License
 
