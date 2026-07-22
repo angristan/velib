@@ -33,6 +33,7 @@ import {
 } from "./hooks/useVelibData"
 import {
   aggregateReplayChanges,
+  latestReplayUpdate,
   nearestReplayCursor,
   replayDataAt,
   replayUpdateAt,
@@ -194,7 +195,7 @@ export default function App() {
   const presentedData = mode === "replay" ? replaySnapshot : live.data
   const displayedUpdate = mode === "replay"
     ? replayUpdateAt(replay.data, replayCursor)
-    : live.liveUpdate
+    : live.liveUpdate ?? latestReplayUpdate(replay.data)
   const activityChanges = useMemo(
     () => aggregateReplayChanges(
       replay.data,

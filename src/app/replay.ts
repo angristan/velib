@@ -124,6 +124,10 @@ export const replayUpdateAt = (
   return replay.frames[Math.min(cursor, replay.frames.length) - 1] ?? null
 }
 
+export const latestReplayUpdate = (
+  replay: ReplayData | null,
+): LiveUpdate | null => replay?.frames.at(-1) ?? null
+
 export const nearestReplayCursor = (replay: ReplayData, timestamp: number): number => {
   let nearest = 0
   let distance = Math.abs(timestamp - replay.baseline.sourceUpdatedAt)
