@@ -72,6 +72,12 @@ bun run deploy
 
 The collector runs every minute. Retention combines cheap exact-key cleanup with bounded recovery passes, avoiding a write-heavy secondary timestamp index. The `LiveFeed` SQLite-class migration is applied by the Worker deployment.
 
+### Rollback and recovery
+
+Apply schema changes before code that requires them and use expand/backfill/contract migrations. A Worker rollback does not undo D1 or Durable Object migrations, so keep the previous Worker compatible with the migrated schema until rollback is no longer required.
+
+For an application-only regression, list deployments and roll back the Worker with the project-pinned Wrangler, then check `/api/health`, one station response, history, and the live feed. For data corruption, stop writes first and use the current D1 Time Travel recovery procedure from Cloudflare's documentation; rehearse restoration against a disposable database before changing the production binding. Record the deployment version, migration state, recovery point, and smoke-test results in the incident log.
+
 ## Data and attribution
 
 Availability and station metadata come from the [Vélib' Métropole GBFS open-data feeds](https://www.velib-metropole.fr/donnees-open-data-gbfs-du-service-velib-metropole), published under the French [Licence Ouverte 2.0](https://www.etalab.gouv.fr/licence-ouverte-open-licence/). The interface shows the effective source-update time. Map data is attributed in the interface by the configured basemap provider.

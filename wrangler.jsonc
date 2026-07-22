@@ -12,9 +12,11 @@
     }
   ],
   "compatibility_date": "2026-07-15",
-  "compatibility_flags": ["nodejs_compat"],
   "triggers": {
     "crons": ["* * * * *"]
+  },
+  "secrets": {
+    "required": ["TURNSTILE_SECRET_KEY", "SESSION_SIGNING_SECRET"]
   },
   "vars": {
     "APP_ENV": "production",
@@ -67,11 +69,11 @@
     "enabled": true,
     "logs": {
       "enabled": true,
-      "head_sampling_rate": 0.1
+      "head_sampling_rate": 1
     },
     "traces": {
       "enabled": true,
-      "head_sampling_rate": 0.05
+      "head_sampling_rate": 1
     }
   },
   "assets": {

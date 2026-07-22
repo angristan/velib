@@ -2,7 +2,6 @@ import { Cause, Effect, Layer, ManagedRuntime } from "effect"
 
 import {
   AccessControl,
-  type AccessEnv,
   makeAccessControlLive,
   RateLimitExceeded,
   VerificationRequired
@@ -13,11 +12,6 @@ import { LiveFeed } from "./live-feed"
 import { makeVelibRepositoryLive } from "./repository"
 import { handleRequest } from "./routes"
 import { type SessionCryptoError } from "./signing"
-
-export interface Env extends AccessEnv {
-  readonly DB: D1Database
-  readonly LIVE_FEED: DurableObjectNamespace<LiveFeed>
-}
 
 export { LiveFeed }
 
