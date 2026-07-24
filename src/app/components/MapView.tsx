@@ -918,7 +918,7 @@ export const MapView = ({
           </span>
         </div>
       )}
-      <div className="map-legend" aria-label={copy.legend}>
+      <aside className="map-legend" aria-label={copy.legend}>
         {mapMode === "heatmap" ? (
           <>
             <span><i className="legend-gradient legend-gradient--gain" />{copy.availabilityUp}</span>
@@ -943,7 +943,7 @@ export const MapView = ({
             <span className="legend-hint">{copy.proportionalHint}</span>
           </>
         )}
-      </div>
+      </aside>
       <Tooltip label={copy.locate} position="left">
         <ActionIcon
           aria-label={copy.locate}

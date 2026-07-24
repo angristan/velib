@@ -211,6 +211,7 @@ export const ReplayControls = ({
               </button>
               <button
                 aria-label={shareConfirmed ? copy.linkCopied : copy.shareView}
+                className="archive-share-button"
                 onClick={onShare}
                 title={copy.shareView}
                 type="button"
@@ -283,6 +284,10 @@ export const ReplayControls = ({
                       archiveTimestampAtScale(positions[1], latestAt),
                     ])}
                     step={1}
+                    thumbChildren={[
+                      <span aria-hidden="true" className="archive-thumb-fill archive-thumb-fill--before" key="before" />,
+                      <span aria-hidden="true" className="archive-thumb-fill archive-thumb-fill--after" key="after" />,
+                    ]}
                     thumbFromLabel={copy.beforeThumb}
                     thumbToLabel={copy.afterThumb}
                     thumbValueText={formatScaleValue}

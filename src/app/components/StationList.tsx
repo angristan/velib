@@ -207,7 +207,14 @@ export const StationList = ({
                       <span className="metric metric--bike"><IconBike size={15} /><b>{station.mechanical}</b><small>{copy.mechanicalShort}</small></span>
                       <span className="metric metric--electric"><IconBolt size={15} /><b>{station.electric}</b><small>{copy.electricShort}</small></span>
                       <span className="metric metric--dock"><IconParking size={15} /><b>{station.docks}</b><small>{copy.docksShort}</small></span>
-                      <span className="availability-bar" aria-label={copy.capacity(totalBikes, station.capacity)}>
+                      <span
+                        aria-label={copy.capacity(totalBikes, station.capacity)}
+                        aria-valuemax={station.capacity}
+                        aria-valuemin={0}
+                        aria-valuenow={totalBikes}
+                        className="availability-bar"
+                        role="progressbar"
+                      >
                         <i style={{ width: `${Math.min(100, (totalBikes / Math.max(1, station.capacity)) * 100)}%` }} />
                       </span>
                     </div>

@@ -58,6 +58,7 @@ it("switches the interface to English and persists the preference", async () => 
 
   expect(screen.getByText("Network observatory")).toBeTruthy()
   expect(screen.getByRole("button", { name: "Passer en français" })).toBeTruthy()
+  expect(screen.getByRole("group", { name: "Mechanical bikes: 0" })).toBeTruthy()
   expect(document.documentElement.lang).toBe("en")
   expect(document.title).toBe("Vélib’ Pulse — Live availability")
   expect(window.localStorage.getItem("velib:locale")).toBe("en")

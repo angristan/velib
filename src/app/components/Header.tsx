@@ -41,7 +41,11 @@ interface KpiProps {
 }
 
 const Kpi = ({ icon, label, value, tone, pulse, locale }: KpiProps) => (
-  <div className={`network-kpi network-kpi--${tone}`}>
+  <div
+    aria-label={`${label}: ${formatNumber(value, locale)}`}
+    className={`network-kpi network-kpi--${tone}`}
+    role="group"
+  >
     <span className="network-kpi__icon" aria-hidden="true">{icon}</span>
     <span>
       <strong className={pulse ? "network-kpi__value--pulse" : undefined} key={value}>

@@ -97,8 +97,8 @@ it("shows cancellable feedback while preparing one-hour playback", () => {
 it("labels comparison endpoints outside plain slider handles", () => {
   renderControls("compare")
 
-  assert.isNotNull(screen.getByRole("slider", { name: "Instant avant" }))
-  assert.isNotNull(screen.getByRole("slider", { name: "Instant après" }))
+  assert.equal(document.querySelector(".archive-thumb-fill--before")?.closest('[role="slider"]')?.getAttribute("aria-label"), "Instant avant")
+  assert.equal(document.querySelector(".archive-thumb-fill--after")?.closest('[role="slider"]')?.getAttribute("aria-label"), "Instant après")
   assert.isNotNull(screen.getByText("Avant"))
   assert.isNotNull(screen.getByText("Après"))
   assert.isNotNull(screen.getByText(/montre automatiquement la variation/))
