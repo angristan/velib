@@ -8,6 +8,7 @@ import {
   decodeStationHistory,
   fetchLiveData,
   fetchReplayData,
+  fetchStationHistory,
 } from "./api"
 
 it("requests the uncached current live state by default", async () => {
@@ -148,6 +149,7 @@ it("uses aggregate averages and movement totals for history charts", () => {
     }]
   }, "2009", "3h")
 
+  assert.isNotNull(decoded)
   assert.deepEqual(decoded.points[0], {
     at: 1_784_625_000_000,
     mechanical: 6,
@@ -157,4 +159,28 @@ it("uses aggregate averages and movement totals for history charts", () => {
     removed: 3,
     returned: 3
   })
+})
+
+it("rejects malformed history instead of presenting an empty series", async () => {
+  assert.isNull(decodeStationHistory({ unexpected: [] }, "2009", "3h"))
+  assert.isNull(decodeStationHistory({
+    points: [{ observedAt: 1_784_625_000, mechanical: "invalid" }],
+  }, "2009", "3h"))
+
+  const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+    new Response(JSON.stringify({ unexpected: [] }), {
+      headers: { "Content-Type": "application/json" },
+    }),
+  )
+  let failure: unknown
+  try {
+    await fetchStationHistory("2009", "3h", new AbortController().signal)
+  } catch (error) {
+    failure = error
+  } finally {
+    fetchMock.mockRestore()
+  }
+
+  assert.instanceOf(failure, Error)
+  assert.strictEqual(failure.message, "L’historique reçu est invalide")
 })

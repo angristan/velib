@@ -278,9 +278,17 @@ export const decodeReplayData = (value: unknown): ReplayData | null => {
   }
 }
 
-const historyMetric = (value: unknown): number => {
+const historyMetric = (value: unknown): number | undefined => {
   const aggregate = toRecord(value)
-  return aggregate ? numberFrom(first(aggregate, ["avg", "average"])) : numberFrom(value)
+  const metric = aggregate ? first(aggregate, ["avg", "average"]) : value
+  return typeof metric === "number" && Number.isFinite(metric) ? metric : undefined
+}
+
+const optionalHistoryCount = (value: unknown): number | undefined => {
+  if (value === undefined || value === null) return 0
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0
+    ? value
+    : undefined
 }
 
 const normalizeHistoryPoint = (value: unknown): HistoryPoint | undefined => {
@@ -288,33 +296,51 @@ const normalizeHistoryPoint = (value: unknown): HistoryPoint | undefined => {
   if (!point) return undefined
 
   const at = timestampFrom(first(point, ["at", "bucketAt", "bucket_at", "observedAt", "observed_at"]))
-  if (!at) return undefined
-
-  const removedMechanical = integerFrom(
+  const mechanical = historyMetric(
+    first(point, ["mechanical", "mechanicalAvg", "mechanical_avg"]),
+  )
+  const electric = historyMetric(first(point, ["electric", "electricAvg", "electric_avg"]))
+  const docks = historyMetric(first(point, ["docks", "docksAvg", "docks_avg"]))
+  const unavailable = historyMetric(
+    first(point, ["unavailable", "unavailableAvg", "unavailable_avg"]),
+  )
+  const removed = optionalHistoryCount(first(point, ["removed", "bikesRemoved", "bikes_removed"]))
+  const removedMechanical = optionalHistoryCount(
     first(point, ["mechanicalRemoved", "mechanical_removed"]),
   )
-  const removedElectric = integerFrom(first(point, ["electricRemoved", "electric_removed"]))
-  const returnedMechanical = integerFrom(
+  const removedElectric = optionalHistoryCount(
+    first(point, ["electricRemoved", "electric_removed"]),
+  )
+  const returned = optionalHistoryCount(first(point, ["returned", "bikesReturned", "bikes_returned"]))
+  const returnedMechanical = optionalHistoryCount(
     first(point, ["mechanicalReturned", "mechanical_returned"]),
   )
-  const returnedElectric = integerFrom(first(point, ["electricReturned", "electric_returned"]))
+  const returnedElectric = optionalHistoryCount(
+    first(point, ["electricReturned", "electric_returned"]),
+  )
+
+  if (
+    !at ||
+    mechanical === undefined ||
+    electric === undefined ||
+    docks === undefined ||
+    unavailable === undefined ||
+    removed === undefined ||
+    removedMechanical === undefined ||
+    removedElectric === undefined ||
+    returned === undefined ||
+    returnedMechanical === undefined ||
+    returnedElectric === undefined
+  ) return undefined
 
   return {
     at,
-    mechanical: historyMetric(
-      first(point, ["mechanical", "mechanicalAvg", "mechanical_avg"]),
-    ),
-    electric: historyMetric(first(point, ["electric", "electricAvg", "electric_avg"])),
-    docks: historyMetric(first(point, ["docks", "docksAvg", "docks_avg"])),
-    unavailable: historyMetric(
-      first(point, ["unavailable", "unavailableAvg", "unavailable_avg"]),
-    ),
-    removed: integerFrom(first(point, ["removed", "bikesRemoved", "bikes_removed"])) +
-      removedMechanical +
-      removedElectric,
-    returned: integerFrom(first(point, ["returned", "bikesReturned", "bikes_returned"])) +
-      returnedMechanical +
-      returnedElectric,
+    mechanical,
+    electric,
+    docks,
+    unavailable,
+    removed: removed + removedMechanical + removedElectric,
+    returned: returned + returnedMechanical + returnedElectric,
   }
 }
 
@@ -322,18 +348,24 @@ export const decodeStationHistory = (
   value: unknown,
   stationCode: string,
   range: HistoryRange,
-): StationHistory => {
+): StationHistory | null => {
   const outer = toRecord(value)
-  const nestedValue = outer?.data
+  if (outer === undefined) return null
+  const nestedValue = outer.data
   const nested = toRecord(nestedValue)
   const payload = nested ?? outer
-  const directPoints = Array.isArray(nestedValue) ? nestedValue : undefined
-  const pointValues = directPoints ?? arrayFrom(first(payload ?? {}, ["points", "history", "items"]))
-  const points = pointValues
-    .map(normalizeHistoryPoint)
-    .filter((point): point is HistoryPoint => point !== undefined)
-    .sort((left, right) => left.at - right.at)
+  const pointValues = Array.isArray(nestedValue)
+    ? nestedValue
+    : first(payload, ["points", "history", "items"])
+  if (!Array.isArray(pointValues)) return null
 
+  const points: HistoryPoint[] = []
+  for (const value of pointValues) {
+    const point = normalizeHistoryPoint(value)
+    if (point === undefined) return null
+    points.push(point)
+  }
+  points.sort((left, right) => left.at - right.at)
   return { stationCode, range, points }
 }
 
@@ -431,7 +463,9 @@ export const fetchStationHistory = async (
   }
 
   const body: unknown = await response.json()
-  return decodeStationHistory(body, stationCode, range)
+  const history = decodeStationHistory(body, stationCode, range)
+  if (history === null) throw new Error("L’historique reçu est invalide")
+  return history
 }
 
 export const fetchSessionStatus = async (
