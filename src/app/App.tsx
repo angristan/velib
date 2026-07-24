@@ -21,7 +21,6 @@ import {
   useState,
 } from "react"
 import {
-  clampTimelineAt,
   compareSnapshots,
   defaultComparison,
 } from "./archive"
@@ -114,7 +113,7 @@ export default function App() {
   const [mapMode, setMapMode] = useState<MapMode>(initialUrlState.mapMode)
   const [mapBackground, setMapBackground] = useState<MapBackground>(computedColorScheme)
   const [timelineMode, setTimelineMode] = useState<TimelineMode>(initialUrlState.timelineMode)
-  const [timelineRange, setTimelineRange] = useState<TimelineRange>(initialUrlState.timelineRange)
+  const timelineRange: TimelineRange = "7d"
   const [replayCursor, setReplayCursor] = useState(0)
   const [replayAnchorAt, setReplayAnchorAt] = useState<number | null>(initialUrlState.replayAt)
   const [comparisonFromAt, setComparisonFromAt] = useState<number | null>(
@@ -351,23 +350,7 @@ export default function App() {
     if (latestAt === undefined || selectedAt === undefined || selectedAt === null) return
     const [fromAt] = defaultComparison(selectedAt, latestAt, timelineRange)
     setComparisonFromAt(fromAt)
-    setMapMode("heatmap")
   }, [live.data?.sourceUpdatedAt, selectedArchiveAt, timelineRange])
-
-  const changeTimelineRange = useCallback((nextRange: TimelineRange) => {
-    setPlaying(false)
-    setTimelineRange(nextRange)
-    const latestAt = live.data?.sourceUpdatedAt
-    if (latestAt === undefined) return
-
-    const nextSelectedAt = clampTimelineAt(selectedArchiveAt ?? latestAt, latestAt, nextRange)
-    if (nextSelectedAt !== selectedArchiveAt) selectArchiveAt(nextSelectedAt)
-    if (timelineMode !== "compare" || comparisonFromAt === null) return
-
-    const nextFromAt = clampTimelineAt(comparisonFromAt, latestAt, nextRange)
-    if (nextFromAt < nextSelectedAt) setComparisonFromAt(nextFromAt)
-    else setComparisonFromAt(defaultComparison(nextSelectedAt, latestAt, nextRange)[0])
-  }, [comparisonFromAt, live.data?.sourceUpdatedAt, selectArchiveAt, selectedArchiveAt, timelineMode])
 
   const changeComparison = useCallback((value: readonly [number, number]) => {
     const [fromAt, toAt] = value
@@ -511,7 +494,7 @@ export default function App() {
               liveUpdate={displayedUpdate}
               locating={locating}
               mapBackground={mapBackground}
-              mapMode={mapMode}
+              mapMode={mode === "replay" ? comparing ? "heatmap" : "stations" : mapMode}
               mode={mode}
               onCameraChange={changeCamera}
               onLocate={locate}
@@ -539,13 +522,11 @@ export default function App() {
             onShare={share}
             onSpeedChange={setPlaybackSpeed}
             onTimelineModeChange={changeTimelineMode}
-            onTimelineRangeChange={changeTimelineRange}
             playing={playing}
             selectedAt={selectedArchiveAt}
             shareConfirmed={shareConfirmed}
             speed={playbackSpeed}
             timelineMode={timelineMode}
-            timelineRange={timelineRange}
           />
           {stations.length === 0 && (
             <DataStateOverlay

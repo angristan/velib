@@ -9,6 +9,40 @@ const HOUR_MS = 60 * MINUTE_MS
 const DAY_MS = 24 * HOUR_MS
 
 export const ARCHIVE_RETENTION_MS = 7 * DAY_MS
+export const ARCHIVE_SCALE_MAX = 10_000
+
+const archiveScaleDenominator = Math.log1p(ARCHIVE_RETENTION_MS / MINUTE_MS)
+
+export const archiveScalePosition = (timestamp: number, latestAt: number): number => {
+  const age = Math.min(ARCHIVE_RETENTION_MS, Math.max(0, latestAt - timestamp))
+  const elapsedShare = Math.log1p(age / MINUTE_MS) / archiveScaleDenominator
+  return Math.round(ARCHIVE_SCALE_MAX * (1 - elapsedShare))
+}
+
+export const archiveTimestampAtScale = (position: number, latestAt: number): number => {
+  const boundedPosition = Math.min(ARCHIVE_SCALE_MAX, Math.max(0, position))
+  const elapsedShare = 1 - boundedPosition / ARCHIVE_SCALE_MAX
+  const ageMinutes = Math.expm1(elapsedShare * archiveScaleDenominator)
+  const age = Math.min(ARCHIVE_RETENTION_MS, Math.round(ageMinutes) * MINUTE_MS)
+  return latestAt - age
+}
+
+export const archiveScaleLandmarks = (latestAt: number): ReadonlyArray<{
+  readonly label: string
+  readonly position: number
+  readonly timestamp: number
+}> => [
+  { label: "−7 j", timestamp: latestAt - ARCHIVE_RETENTION_MS },
+  { label: "−3 j", timestamp: latestAt - 3 * DAY_MS },
+  { label: "−24 h", timestamp: latestAt - DAY_MS },
+  { label: "−6 h", timestamp: latestAt - 6 * HOUR_MS },
+  { label: "−1 h", timestamp: latestAt - HOUR_MS },
+  { label: "−15 min", timestamp: latestAt - 15 * MINUTE_MS },
+  { label: "Maintenant", timestamp: latestAt },
+].map((landmark) => ({
+  ...landmark,
+  position: archiveScalePosition(landmark.timestamp, latestAt),
+}))
 
 export const timelineRanges: ReadonlyArray<{
   readonly value: TimelineRange

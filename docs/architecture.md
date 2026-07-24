@@ -63,7 +63,7 @@ D1 is authoritative. The schema stores:
 
 Minute snapshots and rollups retain seven days of local history. Exact-key cleanup handles the normal retention path; bounded recovery passes remove older rows left by interrupted collections.
 
-The replay endpoint scans a bounded minute window and returns one compact baseline followed by sparse sequential changes. The archive timeline uses independent bounded queries for its A and B points instead of loading seven days of network frames. Station charts read five-minute rollups rather than a row-per-station-per-minute history table.
+The replay endpoint scans a bounded minute window and returns one compact baseline followed by sparse sequential changes. The logarithmic archive timeline uses independent bounded queries for its before and after points instead of loading seven days of network frames. Station charts read five-minute rollups rather than a row-per-station-per-minute history table.
 
 ### LiveFeed Durable Object
 

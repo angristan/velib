@@ -11,7 +11,6 @@ const latestAt = 1_784_625_060_000
 
 const renderControls = (timelineMode: "explore" | "compare", compact = false) => {
   const onTimelineModeChange = vi.fn()
-  const onTimelineRangeChange = vi.fn()
 
   render(
     <MantineProvider>
@@ -31,18 +30,16 @@ const renderControls = (timelineMode: "explore" | "compare", compact = false) =>
         onShare={vi.fn()}
         onSpeedChange={vi.fn()}
         onTimelineModeChange={onTimelineModeChange}
-        onTimelineRangeChange={onTimelineRangeChange}
         playing={false}
         selectedAt={latestAt}
         shareConfirmed={false}
         speed={1}
         timelineMode={timelineMode}
-        timelineRange="1h"
       />
     </MantineProvider>,
   )
 
-  return { onTimelineModeChange, onTimelineRangeChange }
+  return { onTimelineModeChange }
 }
 
 beforeEach(() => {
@@ -59,27 +56,32 @@ beforeEach(() => {
 
 afterEach(cleanup)
 
-it("offers semantic zoom ranges and commits mode changes", async () => {
+it("offers one seven-day scale and commits comparison mode", async () => {
   const user = userEvent.setup()
   const handlers = renderControls("explore")
 
   assert.isNotNull(screen.getByRole("slider", { name: "Instant affiché sur la carte" }))
-  await user.click(screen.getByRole("button", { name: "Comparer" }))
-  await user.click(screen.getByRole("button", { name: "7 j" }))
+  assert.isNotNull(screen.getByText("−7 j"))
+  assert.isNotNull(screen.getByText("−15 min"))
+  assert.isAtLeast(screen.getAllByText("Maintenant").length, 1)
+  assert.isNull(screen.queryByRole("button", { name: "7 j" }))
+  assert.isNull(screen.queryByRole("button", { name: "Afficher les variations" }))
 
+  await user.click(screen.getByRole("button", { name: "Comparer" }))
   assert.deepEqual(handlers.onTimelineModeChange.mock.calls, [["compare"]])
-  assert.deepEqual(handlers.onTimelineRangeChange.mock.calls, [["7d"]])
 })
 
-it("labels both comparison endpoints for keyboard and touch users", () => {
+it("labels comparison endpoints outside plain slider handles", () => {
   renderControls("compare")
 
-  assert.isNotNull(screen.getByRole("slider", { name: "Instant de départ A" }))
-  assert.isNotNull(screen.getByRole("slider", { name: "Instant d’arrivée B" }))
-  assert.isNotNull(screen.getByText(/Variation nette entre A et B/))
+  assert.isNotNull(screen.getByRole("slider", { name: "Instant avant" }))
+  assert.isNotNull(screen.getByRole("slider", { name: "Instant après" }))
+  assert.isNotNull(screen.getByText("Avant"))
+  assert.isNotNull(screen.getByText("Après"))
+  assert.isNotNull(screen.getByText(/montre automatiquement la variation/))
 })
 
-it("collapses to temporal context while station details are open", () => {
+it("keeps readable temporal context while station details are open", () => {
   renderControls("compare", true)
 
   assert.isNotNull(screen.getByLabelText("Contexte temporel de la station"))

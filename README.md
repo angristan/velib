@@ -13,9 +13,9 @@ Vélib’ Pulse is an independent, unofficial service. It is not affiliated with
 - Live availability for mechanical bikes, electric bikes, and open docks.
 - Map and station search with filters, nearby stations, and station history.
 - Live network updates over WebSockets without repeatedly downloading the full dataset.
-- A zoomable archive timeline spanning the retained hour, day, or seven-day history.
+- One logarithmic archive scale spanning the full seven-day history, with recent minutes expanded for precision.
 - One-hour playback around any retained point, at multiple playback speeds.
-- Explicit A/B comparison with a gain-and-loss heatmap and station-level deltas.
+- Explicit before-and-after comparison with an automatic gain-and-loss heatmap and station-level deltas.
 - Shareable URLs that preserve the camera, filters, selection, map layer, archive time, and comparison.
 - Light and dark map themes with responsive desktop and mobile layouts.
 
