@@ -8,6 +8,7 @@ import {
   CompactStation,
   RETENTION_SECONDS,
   ROLLUP_SECONDS,
+  type SnapshotRecord,
 } from "./domain"
 import { makeVelibRepositoryLive, VelibRepository } from "./repository"
 
@@ -19,6 +20,7 @@ describe("Worker runtime bindings", () => {
 
     expect(tables.results.map(({ name }) => name)).toContain("stations")
     expect(tables.results.map(({ name }) => name)).toContain("minute_snapshots")
+    expect(tables.results.map(({ name }) => name)).toContain("minute_updates")
   })
 
   it("bulk upserts station rollups through real D1 JSON functions", async () => {
@@ -87,6 +89,60 @@ describe("Worker runtime bindings", () => {
       "SELECT 1 FROM station_rollups_5m WHERE station_code = ? AND bucket_at = ?",
     ).bind(stationCode, bucketAt).first()
     expect(cleaned).toBeNull()
+  })
+
+  it("replays from one baseline and persisted minute updates", async () => {
+    const firstObservedAt = 2_000_040
+    const stationCount = 1_500
+    const repositoryProgram = Effect.gen(function*() {
+      const repository = yield* VelibRepository
+      for (let minute = 0; minute <= 60; minute += 1) {
+        const observedAt = firstObservedAt + minute * 60
+        const snapshot = CompactSnapshot.make({
+          v: 1,
+          s: Array.from({ length: stationCount }, (_, index) => {
+            const mechanical = index < 250 ? (index + minute) % 12 : index % 12
+            return CompactStation.make({
+              c: 10_000 + index,
+              m: mechanical,
+              e: 2,
+              d: 20 - mechanical,
+              o: 1,
+              r: observedAt - 2,
+            })
+          }),
+        })
+        const record: SnapshotRecord = {
+          observedAt,
+          sourceUpdatedAt: observedAt - 2,
+          snapshot,
+        }
+        const encoded = yield* encodeSnapshot(snapshot)
+        yield* repository.persistSnapshot(record, encoded)
+      }
+
+      const lastObservedAt = firstObservedAt + 60 * 60
+      yield* Effect.promise(async () => {
+        await env.DB.prepare(
+          `DELETE FROM minute_snapshots
+           WHERE observed_at > ? AND observed_at < ?`,
+        ).bind(firstObservedAt, lastObservedAt).run()
+      })
+      return yield* repository.replay(60, lastObservedAt, lastObservedAt - 2)
+    }).pipe(Effect.provide(makeVelibRepositoryLive(env.DB)))
+
+    const replay = await Effect.runPromise(repositoryProgram)
+    const count = await env.DB.prepare(
+      `SELECT COUNT(*) AS count FROM minute_updates
+       WHERE observed_at > ? AND observed_at <= ?`,
+    ).bind(firstObservedAt, firstObservedAt + 60 * 60).first<{ count: number }>()
+
+    expect(count?.count).toBe(60)
+    expect(replay.frames).toHaveLength(60)
+    expect(replay.baseline.stations).toHaveLength(stationCount)
+    expect(replay.frames[0]?.changes).toHaveLength(250)
+    expect(replay.baseline.sourceUpdatedAt).toBe(firstObservedAt - 2)
+    expect(replay.frames.at(-1)?.sourceUpdatedAt).toBe(firstObservedAt + 60 * 60 - 2)
   })
 
   it("runs the LiveFeed Durable Object in Workerd", async () => {

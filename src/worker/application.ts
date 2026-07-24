@@ -9,7 +9,6 @@ import {
   SnapshotRecord
 } from "./domain"
 import { GbfsClient } from "./gbfs"
-import { deriveLiveUpdate } from "./live-update"
 import { VelibRepository } from "./repository"
 
 const errorDetail = (error: AppError): string => {
@@ -63,9 +62,7 @@ export const collectMinute = Effect.fn("collectMinute")(function*(observedAt: nu
     const encoded = yield* encodeSnapshot(snapshot)
     const persisted = yield* repository.persistSnapshot(record, encoded)
     const collectionStatus = persisted.status
-    const liveUpdate = collectionStatus === "ok" && persisted.previous !== null
-      ? deriveLiveUpdate(persisted.previous, record)
-      : null
+    const liveUpdate = persisted.liveUpdate
 
     if (observedAt % ROLLUP_SECONDS === 0) {
       // Finalize one bucket late so a delayed prior Cron can persist its last minute.

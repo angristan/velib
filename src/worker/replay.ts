@@ -1,10 +1,44 @@
 import {
+  LiveUpdateEvent,
   ReplayBaseline,
   ReplayResponse,
   ReplayWindowMinutes,
   SnapshotRecord
 } from "./domain"
 import { deriveLiveUpdate } from "./live-update"
+
+export const deriveReplayFromUpdates = (
+  baseline: SnapshotRecord,
+  frames: ReadonlyArray<LiveUpdateEvent>,
+  minutes: ReplayWindowMinutes,
+  generatedAt: number
+): ReplayResponse | null => {
+  let previousObservedAt = baseline.observedAt
+  let previousSourceUpdatedAt = baseline.sourceUpdatedAt
+  for (const frame of frames) {
+    if (
+      frame.observedAt <= previousObservedAt ||
+      frame.previousSourceUpdatedAt !== previousSourceUpdatedAt ||
+      frame.sourceUpdatedAt <= previousSourceUpdatedAt
+    ) return null
+    previousObservedAt = frame.observedAt
+    previousSourceUpdatedAt = frame.sourceUpdatedAt
+  }
+
+  return ReplayResponse.make({
+    v: 1,
+    minutes,
+    generatedAt,
+    from: baseline.observedAt,
+    to: frames.at(-1)?.observedAt ?? baseline.observedAt,
+    baseline: ReplayBaseline.make({
+      observedAt: baseline.observedAt,
+      sourceUpdatedAt: baseline.sourceUpdatedAt,
+      stations: baseline.snapshot.s
+    }),
+    frames
+  })
+}
 
 /**
  * Stale cron observations can repeat an upstream source timestamp. Replay keeps
@@ -33,17 +67,5 @@ export const deriveReplay = (
     deriveLiveUpdate(advancing[index] ?? first, snapshot)
   )
 
-  return ReplayResponse.make({
-    v: 1,
-    minutes,
-    generatedAt,
-    from: first.observedAt,
-    to: last.observedAt,
-    baseline: ReplayBaseline.make({
-      observedAt: first.observedAt,
-      sourceUpdatedAt: first.sourceUpdatedAt,
-      stations: first.snapshot.s
-    }),
-    frames
-  })
+  return deriveReplayFromUpdates(first, frames, minutes, generatedAt)
 }

@@ -79,6 +79,7 @@ it.effect("validates the authoritative latest header before reusing the warm sna
   }
   let fullPayloadReads = 0
   const persistedPayloads: string[] = []
+  const persistedUpdates: string[] = []
 
   const db = makeFakeDatabase({
     first: (sql) => {
@@ -99,17 +100,24 @@ it.effect("validates the authoritative latest header before reusing the warm sna
       return null
     },
     batch: (statements) => {
-      const statement = statements.find((candidate) =>
+      const latestStatement = statements.find((candidate) =>
         candidate.sql.includes("INSERT INTO latest_status")
       )
-      if (statement === undefined) return
-      const [observedAt, sourceUpdatedAt, payload] = statement.values
-      latest = {
-        observedAt: observedAt as number,
-        sourceUpdatedAt: sourceUpdatedAt as number,
-        payload: payload as string,
+      if (latestStatement !== undefined) {
+        const [observedAt, sourceUpdatedAt, payload] = latestStatement.values
+        latest = {
+          observedAt: observedAt as number,
+          sourceUpdatedAt: sourceUpdatedAt as number,
+          payload: payload as string,
+        }
+        persistedPayloads.push(payload as string)
       }
-      persistedPayloads.push(payload as string)
+      const updateStatement = statements.find((candidate) =>
+        candidate.sql.includes("INSERT OR IGNORE INTO minute_updates")
+      )
+      if (updateStatement !== undefined) {
+        persistedUpdates.push(updateStatement.values[3] as string)
+      }
     },
   })
 
@@ -126,9 +134,13 @@ it.effect("validates the authoritative latest header before reusing the warm sna
 
     assert.deepEqual(firstResult.previous, initial)
     assert.deepEqual(secondResult.previous, first)
+    assert.strictEqual(firstResult.liveUpdate?.previousSourceUpdatedAt, initial.sourceUpdatedAt)
+    assert.strictEqual(secondResult.liveUpdate?.previousSourceUpdatedAt, first.sourceUpdatedAt)
     assert.strictEqual(latestTimestamp, second.sourceUpdatedAt)
     assert.strictEqual(fullPayloadReads, 1)
     assert.deepEqual(persistedPayloads, [firstEncoded.text, secondEncoded.text])
+    assert.strictEqual(persistedUpdates.length, 2)
+    assert.strictEqual(JSON.parse(persistedUpdates[1] ?? "null").sourceUpdatedAt, 178)
   }).pipe(Effect.provide(makeVelibRepositoryLive(db)))
 })
 
@@ -244,9 +256,10 @@ it.effect("runs cleanup without station lookup round trips", () => {
     yield* repository.cleanup(observedAt)
 
     assert.strictEqual(batches.length, 1)
-    assert.strictEqual(batches[0]?.length, 6)
-    const rotatingCleanup = batches[0]?.[4]
-    const bucketCleanup = batches[0]?.[5]
+    assert.strictEqual(batches[0]?.length, 7)
+    assert.include(batches[0]?.[1]?.sql ?? "", "DELETE FROM minute_updates")
+    const rotatingCleanup = batches[0]?.[5]
+    const bucketCleanup = batches[0]?.[6]
     assert.isDefined(rotatingCleanup)
     assert.isDefined(bucketCleanup)
     assert.include(rotatingCleanup.sql, "station_code IN")

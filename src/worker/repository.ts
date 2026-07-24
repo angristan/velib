@@ -17,6 +17,8 @@ import {
   HistoryResponse,
   LiveResponse,
   LiveStation,
+  LiveUpdateEvent,
+  LiveUpdateEventSchema,
   MINUTE_SECONDS,
   NetworkRollup,
   NotFoundError,
@@ -31,7 +33,8 @@ import {
   StationMetadata,
   StationResponse
 } from "./domain"
-import { deriveReplay } from "./replay"
+import { deriveLiveUpdate } from "./live-update"
+import { deriveReplay, deriveReplayFromUpdates } from "./replay"
 import { deriveRollups } from "./rollup"
 
 const MetadataRow = Schema.Struct({
@@ -66,6 +69,19 @@ const SnapshotRow = Schema.Struct({
   observed_at: Schema.Number,
   source_updated_at: Schema.Number,
   payload: SnapshotPayload
+})
+const ReplayBaselineRow = Schema.Struct({
+  observed_at: Schema.Number,
+  source_updated_at: Schema.Number,
+  payload: SnapshotPayload,
+  end_observed_at: Schema.Number,
+  end_source_updated_at: Schema.Number
+})
+const ReplayUpdateRow = Schema.Struct({
+  observed_at: Schema.Number,
+  previous_source_updated_at: Schema.Number,
+  source_updated_at: Schema.Number,
+  payload: Schema.String
 })
 
 const RollupRow = Schema.Struct({
@@ -201,6 +217,18 @@ const stringify = Effect.fn("VelibRepository.stringify")(function*(value: unknow
     },
     catch: (cause) => repositoryError(operation, cause)
   })
+})
+
+const decodeLiveUpdatePayload = Effect.fn("VelibRepository.decodeLiveUpdatePayload")(function*(
+  payload: string
+) {
+  const input = yield* Effect.try({
+    try: (): unknown => JSON.parse(payload),
+    catch: (cause) => decodeError("decodeLiveUpdatePayload.json", cause)
+  })
+  return yield* Schema.decodeUnknownEffect(LiveUpdateEventSchema)(input).pipe(
+    Effect.mapError((cause) => decodeError("decodeLiveUpdatePayload.schema", cause))
+  )
 })
 
 const metadataFromRow = (row: typeof MetadataRow.Type): StationMetadata =>
@@ -379,36 +407,52 @@ const makeRepository = (db: D1Database): VelibRepository["Service"] => {
       record.observedAt <= previous.observedAt ||
       record.sourceUpdatedAt <= previous.sourceUpdatedAt
     ) ? "stale" : "ok"
-    if (status === "stale") return { status, previous }
+    if (status === "stale") return { status, previous, liveUpdate: null }
 
-    yield* runBatches(
-      [
+    const liveUpdate = previous === null ? null : deriveLiveUpdate(previous, record)
+    const liveUpdatePayload = liveUpdate === null
+      ? null
+      : yield* stringify(liveUpdate, "serializeLiveUpdate")
+    const statements = [
+      db.prepare(
+        `INSERT OR IGNORE INTO minute_snapshots
+           (observed_at, source_updated_at, station_count, payload)
+         VALUES (?, ?, ?, ?)`
+      ).bind(
+        record.observedAt,
+        record.sourceUpdatedAt,
+        record.snapshot.s.length,
+        encoded.compressed
+      ),
+      db.prepare(
+        `INSERT INTO latest_status (singleton, observed_at, source_updated_at, payload)
+         VALUES (1, ?, ?, ?)
+         ON CONFLICT(singleton) DO UPDATE SET
+           observed_at = excluded.observed_at,
+           source_updated_at = excluded.source_updated_at,
+           payload = excluded.payload
+         WHERE excluded.observed_at > latest_status.observed_at
+           AND excluded.source_updated_at > latest_status.source_updated_at`
+      ).bind(record.observedAt, record.sourceUpdatedAt, encoded.text)
+    ]
+    if (liveUpdate !== null && liveUpdatePayload !== null) {
+      statements.push(
         db.prepare(
-          `INSERT OR IGNORE INTO minute_snapshots
-             (observed_at, source_updated_at, station_count, payload)
+          `INSERT OR IGNORE INTO minute_updates
+             (observed_at, previous_source_updated_at, source_updated_at, payload)
            VALUES (?, ?, ?, ?)`
         ).bind(
-          record.observedAt,
-          record.sourceUpdatedAt,
-          record.snapshot.s.length,
-          encoded.compressed
-        ),
-        db.prepare(
-          `INSERT INTO latest_status (singleton, observed_at, source_updated_at, payload)
-           VALUES (1, ?, ?, ?)
-           ON CONFLICT(singleton) DO UPDATE SET
-             observed_at = excluded.observed_at,
-             source_updated_at = excluded.source_updated_at,
-             payload = excluded.payload
-           WHERE excluded.observed_at > latest_status.observed_at
-             AND excluded.source_updated_at > latest_status.source_updated_at`
-        ).bind(record.observedAt, record.sourceUpdatedAt, encoded.text)
-      ],
-      "persistSnapshot"
-    )
+          liveUpdate.observedAt,
+          liveUpdate.previousSourceUpdatedAt,
+          liveUpdate.sourceUpdatedAt,
+          liveUpdatePayload
+        )
+      )
+    }
+    yield* runBatches(statements, "persistSnapshot")
 
     latestCache = record
-    return { status, previous }
+    return { status, previous, liveUpdate }
   })
 
   const loadSnapshots = Effect.fn("VelibRepository.loadSnapshots")(function*(from: number, to: number) {
@@ -432,6 +476,100 @@ const makeRepository = (db: D1Database): VelibRepository["Service"] => {
         Effect.mapError((cause) => decodeError("loadSnapshots.payload", cause))
       )
     )
+  })
+
+  const loadReplayFromUpdates = Effect.fn("VelibRepository.loadReplayFromUpdates")(function*(
+    anchor: number,
+    minutes: ReplayWindowMinutes,
+    now: number
+  ) {
+    const baselineInput = yield* firstRow(
+      db.prepare(
+        `WITH replay_end AS (
+           SELECT observed_at, source_updated_at
+           FROM minute_snapshots
+           WHERE source_updated_at <= ?
+           ORDER BY source_updated_at DESC, observed_at DESC
+           LIMIT 1
+         )
+         SELECT
+           baseline.observed_at,
+           baseline.source_updated_at,
+           baseline.payload,
+           replay_end.observed_at AS end_observed_at,
+           replay_end.source_updated_at AS end_source_updated_at
+         FROM minute_snapshots AS baseline
+         CROSS JOIN replay_end
+         WHERE baseline.observed_at >= replay_end.observed_at - ?
+           AND baseline.observed_at <= replay_end.observed_at
+           AND baseline.source_updated_at <= replay_end.source_updated_at
+         ORDER BY baseline.observed_at, baseline.source_updated_at
+         LIMIT 1`
+      ).bind(anchor, minutes * MINUTE_SECONDS),
+      "loadReplayBaseline"
+    )
+    if (baselineInput === null) return null
+    const row = yield* decodeRows(ReplayBaselineRow, baselineInput, "loadReplayBaseline")
+    const snapshot = yield* decompressSnapshot(row.payload).pipe(
+      Effect.mapError((cause) => decodeError("loadReplayBaseline.payload", cause))
+    )
+    const baseline: SnapshotRecord = {
+      observedAt: row.observed_at,
+      sourceUpdatedAt: row.source_updated_at,
+      snapshot
+    }
+    const updateInput = yield* allRows(
+      db.prepare(
+        `SELECT observed_at, previous_source_updated_at, source_updated_at, payload
+         FROM minute_updates
+         WHERE observed_at > ? AND observed_at <= ?
+           AND source_updated_at <= ?
+         ORDER BY observed_at`
+      ).bind(row.observed_at, row.end_observed_at, row.end_source_updated_at),
+      "loadReplayUpdates"
+    )
+    const updateRows = yield* decodeRows(
+      Schema.Array(ReplayUpdateRow),
+      updateInput,
+      "loadReplayUpdates"
+    )
+    const frames: Array<LiveUpdateEvent> = []
+    for (const updateRow of updateRows) {
+      const frame = yield* decodeLiveUpdatePayload(updateRow.payload)
+      if (
+        frame.observedAt !== updateRow.observed_at ||
+        frame.previousSourceUpdatedAt !== updateRow.previous_source_updated_at ||
+        frame.sourceUpdatedAt !== updateRow.source_updated_at
+      ) return null
+      frames.push(frame)
+    }
+    const response = deriveReplayFromUpdates(baseline, frames, minutes, now)
+    const responseEndSourceUpdatedAt = response?.frames.at(-1)?.sourceUpdatedAt ??
+      response?.baseline.sourceUpdatedAt
+    return responseEndSourceUpdatedAt === row.end_source_updated_at ? response : null
+  })
+
+  const backfillReplayUpdates = Effect.fn("VelibRepository.backfillReplayUpdates")(function*(
+    frames: ReadonlyArray<LiveUpdateEvent>
+  ) {
+    if (frames.length === 0) return
+    const statements: Array<D1PreparedStatement> = []
+    for (const frame of frames) {
+      const payload = yield* stringify(frame, "serializeReplayBackfill")
+      statements.push(
+        db.prepare(
+          `INSERT OR IGNORE INTO minute_updates
+             (observed_at, previous_source_updated_at, source_updated_at, payload)
+           VALUES (?, ?, ?, ?)`
+        ).bind(
+          frame.observedAt,
+          frame.previousSourceUpdatedAt,
+          frame.sourceUpdatedAt,
+          payload
+        )
+      )
+    }
+    yield* runBatches(statements, "backfillReplayUpdates")
   })
 
   const loadRollupInputs = Effect.fn("VelibRepository.loadRollupInputs")(function*(
@@ -630,6 +768,7 @@ const makeRepository = (db: D1Database): VelibRepository["Service"] => {
     const cleanupSlot = Math.floor(observedAt / MINUTE_SECONDS) % 300
     const statements: Array<D1PreparedStatement> = [
       db.prepare("DELETE FROM minute_snapshots WHERE observed_at < ?").bind(cutoff),
+      db.prepare("DELETE FROM minute_updates WHERE observed_at < ?").bind(cutoff),
       db.prepare("DELETE FROM collection_runs WHERE observed_at < ?").bind(cutoff),
       db.prepare("DELETE FROM network_rollups_5m WHERE bucket_at < ?").bind(cutoff),
       db.prepare("DELETE FROM completed_rollups WHERE bucket_at < ?").bind(cutoff),
@@ -876,6 +1015,18 @@ const makeRepository = (db: D1Database): VelibRepository["Service"] => {
     }
 
     const anchor = at ?? latest.source_updated_at
+    const persistedReplay = yield* loadReplayFromUpdates(anchor, minutes, now)
+    if (persistedReplay !== null) {
+      yield* Effect.annotateCurrentSpan({
+        minutes,
+        frames: persistedReplay.frames.length,
+        snapshots: 1,
+        anchored: at !== null,
+        replaySource: "updates"
+      })
+      return persistedReplay
+    }
+
     const candidates = yield* loadSnapshots(
       anchor - minutes * MINUTE_SECONDS - 5 * MINUTE_SECONDS,
       anchor + 5 * MINUTE_SECONDS
@@ -902,11 +1053,13 @@ const makeRepository = (db: D1Database): VelibRepository["Service"] => {
     if (response === null) {
       return yield* NotFoundError.make({ resource: "replay" })
     }
+    yield* backfillReplayUpdates(response.frames)
     yield* Effect.annotateCurrentSpan({
       minutes,
       frames: response.frames.length,
       snapshots: snapshots.length,
-      anchored: at !== null
+      anchored: at !== null,
+      replaySource: "snapshots"
     })
     return response
   })

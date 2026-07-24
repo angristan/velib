@@ -1,6 +1,6 @@
 import type { ReplayWindowMinutes } from "./domain"
 
-const CACHE_NAME = "velib-replay-v1"
+const CACHE_NAME = "velib-replay-v2"
 const CACHE_TTL_SECONDS = 24 * 60 * 60
 
 export interface ReplayResponseCache {
@@ -13,7 +13,7 @@ export const replayCacheKey = (
   minutes: ReplayWindowMinutes,
   endSourceUpdatedAt: number,
 ): string => {
-  const key = new URL("/__velib_cache/replay/v1", requestUrl)
+  const key = new URL("/__velib_cache/replay/v2", requestUrl)
   key.searchParams.set("minutes", String(minutes))
   key.searchParams.set("end", String(endSourceUpdatedAt))
   return key.toString()

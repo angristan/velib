@@ -206,6 +206,7 @@ export interface SnapshotRecord {
 export interface PersistSnapshotResult {
   readonly status: CollectionStatus
   readonly previous: SnapshotRecord | null
+  readonly liveUpdate: LiveUpdateEvent | null
 }
 
 export interface CollectionRecord {
