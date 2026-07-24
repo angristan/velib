@@ -22,7 +22,7 @@ export const DataStateOverlay = ({
     return (
       <div className="data-state-overlay" role="status">
         <Loader color="blue" size="sm" />
-        <Text fw={700}>Connexion au réseau…</Text>
+        <Text fw={700}>Chargement des disponibilités…</Text>
       </div>
     )
   }
