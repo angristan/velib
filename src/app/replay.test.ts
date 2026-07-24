@@ -2,6 +2,7 @@ import { assert, it } from "@effect/vitest"
 
 import {
   appendReplayUpdate,
+  appendReplayUpdates,
   latestReplayUpdate,
   nearestReplayCursor,
   replayDataAt,
@@ -88,6 +89,26 @@ it("finds shared replay positions and derives a selected-station streak", () => 
 it("uses the latest replay update for initial live activity", () => {
   assert.strictEqual(latestReplayUpdate(replay), replay.frames[1])
   assert.isNull(latestReplayUpdate(null))
+})
+
+it("reconciles every WebSocket update queued during a refresh", () => {
+  const first = {
+    observedAt: 240_000,
+    previousSourceUpdatedAt: 178_000,
+    sourceUpdatedAt: 238_000,
+    changes: [],
+  }
+  const second = {
+    observedAt: 300_000,
+    previousSourceUpdatedAt: 238_000,
+    sourceUpdatedAt: 298_000,
+    changes: [],
+  }
+
+  const reconciled = appendReplayUpdates(replay, [first, second])
+  assert.isNotNull(reconciled)
+  assert.strictEqual(reconciled?.frames.at(-1)?.sourceUpdatedAt, 298_000)
+  assert.isNull(appendReplayUpdates(replay, [second]))
 })
 
 it("advances the replay window with sequential WebSocket updates", () => {

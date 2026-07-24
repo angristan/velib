@@ -7,7 +7,7 @@ import {
   fetchStationHistory,
 } from "../api"
 import { applyLiveUpdate } from "../live-update"
-import { appendReplayUpdate } from "../replay"
+import { appendReplayUpdate, appendReplayUpdates } from "../replay"
 import type {
   HistoryRange,
   LiveConnectionStatus,
@@ -234,7 +234,9 @@ export const useReplayData = (
   const [data, setData] = useState<ReplayData | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [retryNumber, setRetryNumber] = useState(0)
   const parametersRef = useRef({ minutes, anchorAt })
+  const pendingUpdatesRef = useRef<LiveUpdate[] | null>(null)
   const liveUpdateRef = useRef(liveUpdate)
   liveUpdateRef.current = liveUpdate
 
@@ -244,6 +246,8 @@ export const useReplayData = (
       return
     }
     const controller = new AbortController()
+    const pendingUpdates = liveUpdateRef.current === null ? [] : [liveUpdateRef.current]
+    pendingUpdatesRef.current = pendingUpdates
     const parametersChanged = parametersRef.current.minutes !== minutes ||
       parametersRef.current.anchorAt !== anchorAt
     parametersRef.current = { minutes, anchorAt }
@@ -253,12 +257,16 @@ export const useReplayData = (
 
     fetchReplayData(minutes, anchorAt, controller.signal)
       .then((replay) => {
-        const latestUpdate = liveUpdateRef.current
-        setData(
-          replay === null || latestUpdate === null
-            ? replay
-            : appendReplayUpdate(replay, latestUpdate),
-        )
+        if (replay === null) {
+          setData(null)
+          return
+        }
+        const reconciled = appendReplayUpdates(replay, pendingUpdates)
+        if (reconciled === null) {
+          setRetryNumber((current) => current + 1)
+          return
+        }
+        setData(reconciled)
       })
       .catch((nextError: unknown) => {
         if (controller.signal.aborted) return
@@ -269,14 +277,19 @@ export const useReplayData = (
         }
       })
       .finally(() => {
+        if (pendingUpdatesRef.current === pendingUpdates) pendingUpdatesRef.current = null
         if (!controller.signal.aborted) setLoading(false)
       })
 
-    return () => controller.abort()
-  }, [anchorAt, enabled, minutes, onUnauthorized, refreshKey])
+    return () => {
+      controller.abort()
+      if (pendingUpdatesRef.current === pendingUpdates) pendingUpdatesRef.current = null
+    }
+  }, [anchorAt, enabled, minutes, onUnauthorized, refreshKey, retryNumber])
 
   useEffect(() => {
     if (liveUpdate === null) return
+    pendingUpdatesRef.current?.push(liveUpdate)
     setData((current) => current === null
       ? null
       : appendReplayUpdate(current, liveUpdate))

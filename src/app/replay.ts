@@ -64,6 +64,21 @@ export const appendReplayUpdate = (
   }
 }
 
+export const appendReplayUpdates = (
+  replay: ReplayData,
+  updates: readonly LiveUpdate[],
+): ReplayData | null => {
+  let current = replay
+  for (const update of updates) {
+    const latestSourceUpdatedAt = current.frames.at(-1)?.sourceUpdatedAt ??
+      current.baseline.sourceUpdatedAt
+    if (update.sourceUpdatedAt <= latestSourceUpdatedAt) continue
+    if (update.previousSourceUpdatedAt !== latestSourceUpdatedAt) return null
+    current = appendReplayUpdate(current, update)
+  }
+  return current
+}
+
 export const replayDataAt = (
   metadata: readonly Station[],
   replay: ReplayData,
