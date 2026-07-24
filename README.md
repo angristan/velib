@@ -63,7 +63,7 @@ Browser ──▶ Turnstile session ──▶ Worker API ──▶ D1
    └─────────────────────────────▶ LiveFeed WebSocket
 ```
 
-A scheduled Worker collects the official GBFS feeds every minute. D1 stores the latest network state, compressed minute snapshots, and five-minute rollups. The Worker API serves initial state, replay data, and station history. A hibernating Durable Object broadcasts compact changes to connected browsers while D1 remains authoritative.
+A scheduled Worker collects the official GBFS feeds every minute. D1 stores the latest network state, compressed minute snapshots, and five-minute rollups. The Worker API serves initial state, compact archive snapshots, on-demand replay data, and station history. A hibernating Durable Object broadcasts compact changes to connected browsers while D1 remains authoritative.
 
 Effect provides boundary validation, typed failures, services, and request workflows. Workers Static Assets serves the React, Mantine, TanStack Query, and MapLibre interface.
 

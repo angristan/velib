@@ -1,4 +1,5 @@
 import type {
+  ArchiveSnapshot,
   HistoryPoint,
   HistoryRange,
   LiveData,
@@ -201,25 +202,15 @@ export const decodeLiveUpdate = (value: unknown): LiveUpdate | null => {
   }
 }
 
-export const decodeReplayData = (value: unknown): ReplayData | null => {
-  const payload = toRecord(value)
-  if (!payload || payload.v !== 1) return null
-
-  const minutesInput = requiredInteger(payload.minutes)
-  if (minutesInput !== 15 && minutesInput !== 30 && minutesInput !== 60) return null
-  const minutes: ReplayWindowMinutes = minutesInput
-  const generatedAt = timestampFrom(payload.generatedAt)
-  const from = timestampFrom(payload.from)
-  const to = timestampFrom(payload.to)
-  const baselineInput = toRecord(payload.baseline)
-  if (!generatedAt || !from || !to || from > to || !baselineInput) return null
-
-  const baselineObservedAt = timestampFrom(baselineInput.observedAt)
-  const baselineSourceUpdatedAt = timestampFrom(baselineInput.sourceUpdatedAt)
-  if (!baselineObservedAt || !baselineSourceUpdatedAt) return null
+export const decodeArchiveSnapshot = (value: unknown): ArchiveSnapshot | null => {
+  const snapshot = toRecord(value)
+  if (!snapshot) return null
+  const observedAt = timestampFrom(snapshot.observedAt)
+  const sourceUpdatedAt = timestampFrom(snapshot.sourceUpdatedAt)
+  if (!observedAt || !sourceUpdatedAt) return null
 
   const stations = []
-  for (const input of arrayFrom(baselineInput.stations)) {
+  for (const input of arrayFrom(snapshot.stations)) {
     const station = toRecord(input)
     if (!station) return null
     const code = requiredInteger(station.c)
@@ -253,8 +244,24 @@ export const decodeReplayData = (value: unknown): ReplayData | null => {
   }
   if (stations.length === 0) return null
 
+  return { observedAt, sourceUpdatedAt, stations }
+}
+
+export const decodeReplayData = (value: unknown): ReplayData | null => {
+  const payload = toRecord(value)
+  if (!payload || payload.v !== 1) return null
+
+  const minutesInput = requiredInteger(payload.minutes)
+  if (minutesInput !== 15 && minutesInput !== 30 && minutesInput !== 60) return null
+  const minutes: ReplayWindowMinutes = minutesInput
+  const generatedAt = timestampFrom(payload.generatedAt)
+  const from = timestampFrom(payload.from)
+  const to = timestampFrom(payload.to)
+  const baseline = decodeArchiveSnapshot(payload.baseline)
+  if (!generatedAt || !from || !to || from > to || baseline === null) return null
+
   const frames: LiveUpdate[] = []
-  let expectedSourceUpdatedAt = baselineSourceUpdatedAt
+  let expectedSourceUpdatedAt = baseline.sourceUpdatedAt
   for (const input of arrayFrom(payload.frames)) {
     const frame = decodeLiveUpdate(input)
     if (frame === null || frame.previousSourceUpdatedAt !== expectedSourceUpdatedAt) {
@@ -269,11 +276,7 @@ export const decodeReplayData = (value: unknown): ReplayData | null => {
     generatedAt,
     from,
     to,
-    baseline: {
-      observedAt: baselineObservedAt,
-      sourceUpdatedAt: baselineSourceUpdatedAt,
-      stations,
-    },
+    baseline,
     frames,
   }
 }
@@ -423,6 +426,29 @@ export const fetchLiveData = async (
 
 export const canonicalReplayAnchorAt = (anchorAt: number | null): number | null =>
   anchorAt === null ? null : Math.floor(anchorAt / 1_000) * 1_000
+
+export const fetchArchiveSnapshot = async (
+  anchorAt: number,
+  signal: AbortSignal,
+): Promise<ArchiveSnapshot | null> => {
+  const canonicalAnchor = canonicalReplayAnchorAt(anchorAt)
+  if (canonicalAnchor === null) return null
+  const response = await fetch(`/api/snapshot?at=${canonicalAnchor / 1_000}`, {
+    cache: "default",
+    headers: { Accept: "application/json" },
+    signal,
+  })
+
+  if (response.status === 204 || response.status === 404) return null
+  if (!response.ok) {
+    throw new ApiRequestError(response.status, await errorMessage(response))
+  }
+
+  const body: unknown = await response.json()
+  const snapshot = decodeArchiveSnapshot(body)
+  if (snapshot === null) throw new Error("L’instant d’archive reçu est invalide")
+  return snapshot
+}
 
 export const fetchReplayData = async (
   minutes: ReplayWindowMinutes,

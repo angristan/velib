@@ -63,7 +63,7 @@ D1 is authoritative. The schema stores:
 
 Minute snapshots and rollups retain seven days of local history. Exact-key cleanup handles the normal retention path; bounded recovery passes remove older rows left by interrupted collections.
 
-The replay endpoint scans a bounded minute window and returns one compact baseline followed by sparse sequential changes. The logarithmic archive timeline uses independent bounded queries for its before and after points instead of loading seven days of network frames. Station charts read five-minute rollups rather than a row-per-station-per-minute history table.
+The snapshot endpoint reads one compressed retained state for fast logarithmic timeline navigation and before/after comparison. The replay endpoint scans a bounded minute window and returns one compact baseline followed by sparse sequential changes only when one-hour playback starts. Station charts read five-minute rollups rather than a row-per-station-per-minute history table.
 
 ### LiveFeed Durable Object
 
@@ -80,6 +80,7 @@ The Worker handles these routes:
 | `POST /api/session` | Verify Turnstile and issue a signed session cookie |
 | `GET /api/live` | Current network baseline or reconciliation |
 | `GET /api/live/socket` | LiveFeed WebSocket upgrade |
+| `GET /api/snapshot?at=<unix-seconds>` | Compact retained network state at or before an archive point |
 | `GET /api/replay?minutes=15\|30\|60&at=<unix-seconds>` | Bounded network replay ending at the latest or a retained archive point |
 | `GET /api/stations/:code` | Current station details |
 | `GET /api/stations/:code/history?range=1h\|3h\|1d\|7d` | Station history |
@@ -90,7 +91,7 @@ The Worker handles these routes:
 
 Workers Static Assets serves the Vite-built React application. `run_worker_first` routes `/api/*` through Worker code while unknown interface paths use SPA fallback behavior.
 
-The client uses React, Mantine, TanStack Query, and MapLibre. TanStack Query owns canonical live snapshots, replay windows, station-history caches, cancellation, and bounded retry policy. A separate subscription hook owns WebSocket connection and reconciliation state and writes validated updates into the Query cache. URL state captures the map camera, filters, selection, layer, replay window, and replay timestamp so views remain shareable.
+The client uses React, Mantine, TanStack Query, and MapLibre. TanStack Query owns canonical live state, archive snapshots, replay windows, station-history caches, cancellation, and bounded retry policy. A separate subscription hook owns WebSocket connection and reconciliation state and writes validated updates into the Query cache. URL state captures the map camera, filters, selection, layer, replay window, and replay timestamp so views remain shareable.
 
 ## Caching and consistency
 

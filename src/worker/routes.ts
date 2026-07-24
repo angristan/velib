@@ -119,6 +119,7 @@ const parseSessionVerification = Effect.fn("parseSessionVerification")(function*
 const noSearchParams = new Set<string>()
 const liveSearchParams = new Set(["reconcile"])
 const replaySearchParams = new Set(["minutes", "at"])
+const snapshotSearchParams = new Set(["at"])
 const historySearchParams = new Set(["range"])
 
 const parseStationCode = Effect.fn("parseStationCode")(function*(value: string) {
@@ -199,6 +200,14 @@ const routeRequest = Effect.fn("routeRequest")(function*(request: Request) {
   if (url.pathname === "/api/live") {
     yield* validateSearchParams(url, liveSearchParams)
     return jsonResponse(yield* repository.live(now), 200, "public, max-age=15")
+  }
+  if (url.pathname === "/api/snapshot") {
+    yield* validateSearchParams(url, snapshotSearchParams)
+    const at = yield* parseReplayAt(url.searchParams.get("at"), now)
+    if (at === null) {
+      return yield* RequestError.make({ detail: "at is required" })
+    }
+    return jsonResponse(yield* repository.snapshot(at), 200, "public, max-age=86400")
   }
   if (url.pathname === "/api/replay") {
     yield* validateSearchParams(url, replaySearchParams)

@@ -1,5 +1,6 @@
 import { applyLiveUpdate } from "./live-update"
 import type {
+  ArchiveSnapshot,
   LiveData,
   LiveStationChange,
   LiveUpdate,
@@ -97,12 +98,11 @@ export const mergeReplayRefresh = (
   return appendReplayUpdates(refreshed, pendingUpdates) ?? previous
 }
 
-export const replayDataAt = (
+export const archiveSnapshotDataAt = (
   metadata: readonly Station[],
-  replay: ReplayData,
-  cursor: number,
+  snapshot: ArchiveSnapshot,
 ): LiveData => {
-  const baseline = new Map(replay.baseline.stations.map((station) => [station.code, station]))
+  const baseline = new Map(snapshot.stations.map((station) => [station.code, station]))
   const stations: Station[] = []
   for (const station of metadata) {
     const state = baseline.get(station.code)
@@ -134,11 +134,19 @@ export const replayDataAt = (
     })
   }
 
-  let current: LiveData = {
-    observedAt: replay.baseline.observedAt,
-    sourceUpdatedAt: replay.baseline.sourceUpdatedAt,
+  return {
+    observedAt: snapshot.observedAt,
+    sourceUpdatedAt: snapshot.sourceUpdatedAt,
     stations,
   }
+}
+
+export const replayDataAt = (
+  metadata: readonly Station[],
+  replay: ReplayData,
+  cursor: number,
+): LiveData => {
+  let current = archiveSnapshotDataAt(metadata, replay.baseline)
   const end = Math.min(Math.max(0, cursor), replay.frames.length)
   for (let index = 0; index < end; index += 1) {
     const frame = replay.frames[index]

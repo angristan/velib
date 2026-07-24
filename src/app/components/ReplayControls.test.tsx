@@ -9,7 +9,11 @@ import { ReplayControls } from "./ReplayControls"
 
 const latestAt = 1_784_625_060_000
 
-const renderControls = (timelineMode: "explore" | "compare", compact = false) => {
+const renderControls = (
+  timelineMode: "explore" | "compare",
+  compact = false,
+  playbackLoading = false,
+) => {
   const onTimelineModeChange = vi.fn()
 
   render(
@@ -30,7 +34,8 @@ const renderControls = (timelineMode: "explore" | "compare", compact = false) =>
         onShare={vi.fn()}
         onSpeedChange={vi.fn()}
         onTimelineModeChange={onTimelineModeChange}
-        playing={false}
+        playbackLoading={playbackLoading}
+        playing={playbackLoading}
         selectedAt={latestAt}
         shareConfirmed={false}
         speed={1}
@@ -69,6 +74,13 @@ it("offers one seven-day scale and commits comparison mode", async () => {
 
   await user.click(screen.getByRole("button", { name: "Comparer" }))
   assert.deepEqual(handlers.onTimelineModeChange.mock.calls, [["compare"]])
+})
+
+it("shows cancellable feedback while preparing one-hour playback", () => {
+  renderControls("explore", false, true)
+
+  assert.isNotNull(screen.getByText("Préparation de la relecture…"))
+  assert.isNotNull(screen.getByRole("button", { name: "Annuler la préparation de la relecture" }))
 })
 
 it("labels comparison endpoints outside plain slider handles", () => {

@@ -45,6 +45,7 @@ interface ReplayControlsProps {
   readonly compact: boolean
   readonly playing: boolean
   readonly loading: boolean
+  readonly playbackLoading: boolean
   readonly shareConfirmed: boolean
   readonly onModeChange: (mode: DataMode) => void
   readonly onMapModeChange: (mode: MapMode) => void
@@ -71,6 +72,7 @@ export const ReplayControls = ({
   compact,
   playing,
   loading,
+  playbackLoading,
   shareConfirmed,
   onModeChange,
   onMapModeChange,
@@ -166,7 +168,7 @@ export const ReplayControls = ({
 
   return (
     <section
-      aria-busy={mode === "replay" && loading}
+      aria-busy={mode === "replay" && (loading || playbackLoading)}
       aria-label="Outils temporels de la carte"
       className="replay-controls"
       data-mode={mode}
@@ -314,7 +316,9 @@ export const ReplayControls = ({
             {timelineMode === "explore" ? (
               <>
                 <button
-                  aria-label={playing ? "Mettre la relecture en pause" : "Lire l’heure précédant cet instant"}
+                  aria-label={playbackLoading
+                    ? "Annuler la préparation de la relecture"
+                    : playing ? "Mettre la relecture en pause" : "Lire l’heure précédant cet instant"}
                   className="replay-play-button"
                   disabled={disabled || frameCount === 0}
                   onClick={() => onPlayingChange(!playing)}
@@ -322,7 +326,9 @@ export const ReplayControls = ({
                 >
                   {playing ? <IconPlayerPauseFilled size={17} /> : <IconPlayerPlayFilled size={17} />}
                 </button>
-                <span className="archive-playback-label">Rejouer l’heure précédant cet instant</span>
+                <span className="archive-playback-label">
+                  {playbackLoading ? "Préparation de la relecture…" : "Rejouer l’heure précédant cet instant"}
+                </span>
                 <div className="replay-speed-group" aria-label="Vitesse de lecture" role="group">
                   {speeds.map((value) => (
                     <button

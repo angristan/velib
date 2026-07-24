@@ -30,6 +30,7 @@ it("returns 503 when human verification is unavailable", async () => {
         persistSnapshot: () => Effect.die("unused"),
         recordCollection: () => Effect.die("unused"),
         replay: () => Effect.die("unused"),
+        snapshot: () => Effect.die("unused"),
         station: () => Effect.die("unused"),
         syncMetadata: () => Effect.die("unused"),
       }),

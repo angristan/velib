@@ -7,6 +7,7 @@ import {
 } from "../api"
 import { applyLiveUpdate } from "../live-update"
 import {
+  archiveSnapshotQueryOptions,
   liveQueryOptions,
   replayQueryOptions,
   stationHistoryQueryOptions,
@@ -14,6 +15,7 @@ import {
 } from "../queries"
 import { appendReplayUpdate } from "../replay"
 import type {
+  ArchiveSnapshot,
   HistoryRange,
   LiveConnectionStatus,
   LiveData,
@@ -209,6 +211,27 @@ export const useLiveData = (
     connection,
     liveUpdate,
     refresh,
+  }
+}
+
+export const useArchiveSnapshot = (
+  anchorAt: number | null,
+  enabled: boolean,
+  onUnauthorized: () => void,
+): QueryState<ArchiveSnapshot | null> => {
+  const options = useMemo(() => archiveSnapshotQueryOptions(anchorAt), [anchorAt])
+  const query = useQuery({ ...options, enabled: enabled && anchorAt !== null })
+
+  useEffect(() => {
+    if (query.error instanceof ApiRequestError && query.error.status === 401) {
+      onUnauthorized()
+    }
+  }, [onUnauthorized, query.error])
+
+  return {
+    data: query.data ?? null,
+    loading: enabled && anchorAt !== null && query.isFetching,
+    error: query.error === null ? null : messageFrom(query.error),
   }
 }
 

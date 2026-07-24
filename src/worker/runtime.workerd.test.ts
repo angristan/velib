@@ -121,6 +121,7 @@ describe("Worker runtime bindings", () => {
         yield* repository.persistSnapshot(record, encoded)
       }
 
+      const selected = yield* repository.snapshot(firstObservedAt + 30 * 60 - 2)
       const lastObservedAt = firstObservedAt + 60 * 60
       yield* Effect.promise(async () => {
         await env.DB.prepare(
@@ -128,15 +129,18 @@ describe("Worker runtime bindings", () => {
            WHERE observed_at > ? AND observed_at < ?`,
         ).bind(firstObservedAt, lastObservedAt).run()
       })
-      return yield* repository.replay(60, lastObservedAt, lastObservedAt - 2)
+      const replay = yield* repository.replay(60, lastObservedAt, lastObservedAt - 2)
+      return { replay, selected }
     }).pipe(Effect.provide(makeVelibRepositoryLive(env.DB)))
 
-    const replay = await Effect.runPromise(repositoryProgram)
+    const { replay, selected } = await Effect.runPromise(repositoryProgram)
     const count = await env.DB.prepare(
       `SELECT COUNT(*) AS count FROM minute_updates
        WHERE observed_at > ? AND observed_at <= ?`,
     ).bind(firstObservedAt, firstObservedAt + 60 * 60).first<{ count: number }>()
 
+    expect(selected.sourceUpdatedAt).toBe(firstObservedAt + 30 * 60 - 2)
+    expect(selected.stations).toHaveLength(stationCount)
     expect(count?.count).toBe(60)
     expect(replay.frames).toHaveLength(60)
     expect(replay.baseline.stations).toHaveLength(stationCount)

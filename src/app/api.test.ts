@@ -2,11 +2,13 @@ import { assert, it } from "@effect/vitest"
 import { vi } from "vitest"
 
 import {
+  decodeArchiveSnapshot,
   decodeLiveData,
   decodeLiveUpdate,
   canonicalReplayAnchorAt,
   decodeReplayData,
   decodeStationHistory,
+  fetchArchiveSnapshot,
   fetchLiveData,
   fetchReplayData,
   fetchStationHistory,
@@ -51,6 +53,31 @@ it("bypasses the HTTP cache for explicit live reconciliation", async () => {
 it("canonicalizes replay anchors to predecessor-safe whole seconds", () => {
   assert.strictEqual(canonicalReplayAnchorAt(1_784_625_060_999), 1_784_625_060_000)
   assert.isNull(canonicalReplayAnchorAt(null))
+})
+
+it("requests cacheable compact snapshots at canonical anchors", async () => {
+  const payload = {
+    observedAt: 1_784_625_060,
+    sourceUpdatedAt: 1_784_625_040,
+    stations: [{ c: 2009, m: 8, e: 3, d: 6, o: 1 }],
+  }
+  const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+    new Response(JSON.stringify(payload)),
+  )
+
+  try {
+    const snapshot = await fetchArchiveSnapshot(
+      1_784_625_060_999,
+      new AbortController().signal,
+    )
+
+    const [path, init] = fetchMock.mock.calls[0] ?? []
+    assert.strictEqual(path, "/api/snapshot?at=1784625060")
+    assert.strictEqual(init?.cache, "default")
+    assert.deepEqual(snapshot, decodeArchiveSnapshot(payload))
+  } finally {
+    fetchMock.mockRestore()
+  }
 })
 
 it("always requests replay through the Worker cache", async () => {

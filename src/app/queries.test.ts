@@ -3,6 +3,7 @@ import { vi } from "vitest"
 
 import { createAppQueryClient } from "./query-client"
 import {
+  archiveSnapshotQueryOptions,
   liveQueryOptions,
   replayQueryOptions,
   stationHistoryQueryOptions,
@@ -23,6 +24,14 @@ it("does not replace a live cache with an older snapshot", async () => {
   } finally {
     client.clear()
   }
+})
+
+it("deduplicates snapshot anchors that resolve to the same second", () => {
+  const first = archiveSnapshotQueryOptions(1_784_625_060_100)
+  const second = archiveSnapshotQueryOptions(1_784_625_060_999)
+
+  assert.deepEqual(first.queryKey, second.queryKey)
+  assert.deepEqual(first.queryKey, velibQueryKeys.snapshot(1_784_625_060_000))
 })
 
 it("deduplicates replay anchors that resolve to the same second", () => {

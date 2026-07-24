@@ -3,6 +3,7 @@ import { assert, it } from "@effect/vitest"
 import {
   appendReplayUpdate,
   appendReplayUpdates,
+  archiveSnapshotDataAt,
   latestReplayUpdate,
   mergeReplayRefresh,
   nearestReplayCursor,
@@ -70,6 +71,14 @@ const replay: ReplayData = {
     },
   ],
 }
+
+it("builds a map state from one compact archive snapshot", () => {
+  const snapshot = archiveSnapshotDataAt([station], replay.baseline)
+
+  assert.strictEqual(snapshot.sourceUpdatedAt, 58_000)
+  assert.strictEqual(snapshot.stations[0]?.mechanical, 4)
+  assert.strictEqual(snapshot.stations[0]?.docks, 14)
+})
 
 it("reconstructs a historical station snapshot at any cursor", () => {
   const first = replayDataAt([station], replay, 1)

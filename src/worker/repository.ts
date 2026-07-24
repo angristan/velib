@@ -23,6 +23,7 @@ import {
   NetworkRollup,
   NotFoundError,
   PersistSnapshotResult,
+  ReplayBaseline,
   ReplayResponse,
   ReplayWindowMinutes,
   RepositoryError,
@@ -147,6 +148,9 @@ export class VelibRepository extends Context.Service<VelibRepository, {
     now: number
   ) => Effect.Effect<HistoryResponse, RepositoryError | NotFoundError>
   readonly latestSourceUpdatedAt: () => Effect.Effect<number | null, RepositoryError>
+  readonly snapshot: (
+    at: number
+  ) => Effect.Effect<ReplayBaseline, RepositoryError | NotFoundError>
   readonly replay: (
     minutes: ReplayWindowMinutes,
     now: number,
@@ -1004,6 +1008,31 @@ const makeRepository = (db: D1Database): VelibRepository["Service"] => {
     return latest?.source_updated_at ?? null
   })
 
+  const snapshot = Effect.fn("VelibRepository.snapshot")(function*(at: number) {
+    const input = yield* firstRow(
+      db.prepare(
+        `SELECT observed_at, source_updated_at, payload
+         FROM minute_snapshots
+         WHERE source_updated_at <= ?
+         ORDER BY source_updated_at DESC, observed_at DESC
+         LIMIT 1`
+      ).bind(at),
+      "snapshot"
+    )
+    if (input === null) {
+      return yield* NotFoundError.make({ resource: "snapshot" })
+    }
+    const row = yield* decodeRows(SnapshotRow, input, "snapshot")
+    const compact = yield* decompressSnapshot(row.payload).pipe(
+      Effect.mapError((cause) => decodeError("snapshot.payload", cause))
+    )
+    return ReplayBaseline.make({
+      observedAt: row.observed_at,
+      sourceUpdatedAt: row.source_updated_at,
+      stations: compact.s
+    })
+  })
+
   const replay = Effect.fn("VelibRepository.replay")(function*(
     minutes: ReplayWindowMinutes,
     now: number,
@@ -1123,6 +1152,7 @@ const makeRepository = (db: D1Database): VelibRepository["Service"] => {
     station,
     history,
     latestSourceUpdatedAt,
+    snapshot,
     replay,
     health
   }

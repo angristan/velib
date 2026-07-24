@@ -62,6 +62,12 @@ export interface ReplayBaselineStation {
   readonly operative: boolean
 }
 
+export interface ArchiveSnapshot {
+  readonly observedAt: number
+  readonly sourceUpdatedAt: number
+  readonly stations: readonly ReplayBaselineStation[]
+}
+
 export interface ReplayData {
   readonly minutes: ReplayWindowMinutes
   readonly generatedAt: number
