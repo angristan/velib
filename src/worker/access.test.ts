@@ -114,6 +114,51 @@ it.effect("rate limits Turnstile verification attempts before Siteverify", () =>
   ),
 )
 
+it("aborts Siteverify when the request effect is interrupted", async () => {
+  let resolveStarted: (() => void) | undefined
+  const started = new Promise<void>((resolve) => {
+    resolveStarted = resolve
+  })
+  let siteverifyAborted = false
+  const waitingSiteverify: typeof fetch = (_input, init) => {
+    const signal = init?.signal
+    resolveStarted?.()
+    return new Promise<Response>((_resolve, reject) => {
+      signal?.addEventListener("abort", () => {
+        siteverifyAborted = true
+        reject(signal.reason)
+      }, { once: true })
+    })
+  }
+  const controller = new AbortController()
+  const running = Effect.runPromise(
+    Effect.gen(function*() {
+      const access = yield* AccessControl
+      return yield* access.create(request(), "valid-token")
+    }).pipe(
+      Effect.provide(
+        makeAccessControlLive(
+          productionEnvironment(allowingRateLimiter, allowingRateLimiter),
+          waitingSiteverify,
+        ),
+      ),
+    ),
+    { signal: controller.signal },
+  )
+
+  await started
+  controller.abort()
+  let interrupted = false
+  try {
+    await running
+  } catch {
+    interrupted = true
+  }
+
+  assert.isTrue(interrupted)
+  assert.isTrue(siteverifyAborted)
+})
+
 it.effect("rejects altered sessions and enforced rate limits", () =>
   Effect.gen(function*() {
     const allowing = yield* AccessControl

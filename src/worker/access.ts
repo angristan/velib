@@ -261,7 +261,7 @@ export const makeAccessControlLive = (
     if (remoteIp !== null) form.set("remoteip", remoteIp)
 
     const input = yield* Effect.tryPromise({
-      try: async (): Promise<unknown> => {
+      try: async (signal): Promise<unknown> => {
         const response = await fetcher(TURNSTILE_VERIFY_ENDPOINT, {
           method: "POST",
           body: form,
@@ -269,7 +269,7 @@ export const makeAccessControlLive = (
             Accept: "application/json",
             "Content-Type": "application/x-www-form-urlencoded"
           },
-          signal: AbortSignal.timeout(TURNSTILE_TIMEOUT_MS)
+          signal: AbortSignal.any([signal, AbortSignal.timeout(TURNSTILE_TIMEOUT_MS)])
         })
         if (!response.ok) throw new Error(`Siteverify returned HTTP ${response.status}`)
         return response.json()
