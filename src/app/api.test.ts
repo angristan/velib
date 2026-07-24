@@ -12,10 +12,7 @@ import {
   fetchStationHistory,
 } from "./api"
 
-it("requests the uncached current live state by default", async () => {
-  const now = 1_784_625_123_456
-  vi.useFakeTimers()
-  vi.setSystemTime(now)
+it("allows the initial live state to use the HTTP cache", async () => {
   const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({
     observedAt: 1_784_625_120,
     sourceUpdatedAt: 1_784_625_100,
@@ -26,12 +23,28 @@ it("requests the uncached current live state by default", async () => {
     await fetchLiveData(new AbortController().signal)
 
     const [path, init] = fetchMock.mock.calls[0] ?? []
-    const reconcileKey = Math.floor(now / 60_000) * 60_000
-    assert.strictEqual(path, `/api/live?reconcile=${reconcileKey}`)
+    assert.strictEqual(path, "/api/live")
+    assert.strictEqual(init?.cache, "default")
+  } finally {
+    fetchMock.mockRestore()
+  }
+})
+
+it("bypasses the HTTP cache for explicit live reconciliation", async () => {
+  const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({
+    observedAt: 1_784_625_120,
+    sourceUpdatedAt: 1_784_625_100,
+    stations: [],
+  })))
+
+  try {
+    await fetchLiveData(new AbortController().signal, 1_784_625_120_000)
+
+    const [path, init] = fetchMock.mock.calls[0] ?? []
+    assert.strictEqual(path, "/api/live?reconcile=1784625120000")
     assert.strictEqual(init?.cache, "no-store")
   } finally {
     fetchMock.mockRestore()
-    vi.useRealTimers()
   }
 })
 

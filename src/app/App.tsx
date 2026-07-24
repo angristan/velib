@@ -95,7 +95,7 @@ export default function App() {
   const { setColorScheme } = useMantineColorScheme()
   const computedColorScheme = useComputedColorScheme("light")
   const access = useAccessSession()
-  const live = useLiveData(access.verified, access.requireVerification)
+  const live = useLiveData(!access.checked || access.verified, access.requireVerification)
   const [selectedCode, setSelectedCode] = useState<string | null>(initialUrlState.selectedCode)
   const [selectionFocus, setSelectionFocus] = useState(0)
   const [search, setSearch] = useState(initialUrlState.search)
@@ -131,12 +131,13 @@ export default function App() {
   const replayRefreshKey = mode === "live"
     ? Math.floor((live.data?.sourceUpdatedAt ?? 0) / (15 * 60_000))
     : -1
+  const replayNeeded = mode === "replay" || mapMode === "heatmap"
   const replay = useReplayData(
     ARCHIVE_REPLAY_MINUTES,
     replayRefreshKey,
     replayAnchorAt,
     mode === "live" ? live.liveUpdate : null,
-    access.verified,
+    access.verified && replayNeeded,
     access.requireVerification,
   )
   const comparisonReplay = useReplayData(

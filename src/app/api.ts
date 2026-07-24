@@ -401,7 +401,7 @@ const errorMessage = async (response: Response): Promise<string> => {
 
 export const fetchLiveData = async (
   signal: AbortSignal,
-  reconcileKey: number | null = Math.floor(Date.now() / 60_000) * 60_000,
+  reconcileKey: number | null = null,
 ): Promise<LiveData | null> => {
   const path = reconcileKey === null
     ? "/api/live"
