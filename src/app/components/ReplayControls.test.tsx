@@ -13,7 +13,9 @@ const renderControls = (
   timelineMode: "explore" | "compare",
   compact = false,
   playbackLoading = false,
+  mode: "live" | "replay" = "replay",
 ) => {
+  const onModeChange = vi.fn()
   const onTimelineModeChange = vi.fn()
 
   render(
@@ -24,11 +26,9 @@ const renderControls = (
         frameCount={12}
         latestAt={latestAt}
         loading={false}
-        mapMode="stations"
-        mode="replay"
+        mode={mode}
         onComparisonChange={vi.fn()}
-        onMapModeChange={vi.fn()}
-        onModeChange={vi.fn()}
+        onModeChange={onModeChange}
         onPlayingChange={vi.fn()}
         onSelectedAtChange={vi.fn()}
         onShare={vi.fn()}
@@ -44,7 +44,7 @@ const renderControls = (
     </MantineProvider>,
   )
 
-  return { onTimelineModeChange }
+  return { onModeChange, onTimelineModeChange }
 }
 
 beforeEach(() => {
@@ -61,6 +61,14 @@ beforeEach(() => {
 
 afterEach(cleanup)
 
+it("keeps the live toolbar focused on archives and sharing", () => {
+  renderControls("explore", false, false, "live")
+
+  assert.isNotNull(screen.getByText("Archives"))
+  assert.isNotNull(screen.getByText("Partager"))
+  assert.isNull(screen.queryByText("Variations"))
+})
+
 it("offers one seven-day scale and commits comparison mode", async () => {
   const user = userEvent.setup()
   const handlers = renderControls("explore")
@@ -74,6 +82,9 @@ it("offers one seven-day scale and commits comparison mode", async () => {
 
   await user.click(screen.getByRole("button", { name: "Comparer" }))
   assert.deepEqual(handlers.onTimelineModeChange.mock.calls, [["compare"]])
+
+  await user.click(screen.getByRole("button", { name: "Fermer les archives" }))
+  assert.deepEqual(handlers.onModeChange.mock.calls, [["live"]])
 })
 
 it("shows cancellable feedback while preparing one-hour playback", () => {

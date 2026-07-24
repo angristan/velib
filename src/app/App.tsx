@@ -40,7 +40,6 @@ import {
 import {
   aggregateReplayChanges,
   archiveSnapshotDataAt,
-  latestReplayUpdate,
   replayDataAt,
   replayUpdateAt,
   stationTrend,
@@ -50,7 +49,6 @@ import type {
   HistoryRange,
   MapBackground,
   MapCamera,
-  MapMode,
   PlaybackSpeed,
   Station,
   StationComparison,
@@ -113,7 +111,6 @@ export default function App() {
     }
   })
   const [mode, setMode] = useState<DataMode>(initialUrlState.mode)
-  const [mapMode, setMapMode] = useState<MapMode>(initialUrlState.mapMode)
   const [mapBackground, setMapBackground] = useState<MapBackground>(computedColorScheme)
   const [timelineMode, setTimelineMode] = useState<TimelineMode>(initialUrlState.timelineMode)
   const timelineRange: TimelineRange = "7d"
@@ -145,14 +142,12 @@ export default function App() {
     access.verified && mode === "replay" && timelineMode === "compare",
     access.requireVerification,
   )
-  const replayNeeded = mode === "live"
-    ? mapMode === "heatmap"
-    : playbackRequested || playbackActive
+  const replayNeeded = mode === "replay" && (playbackRequested || playbackActive)
   const replay = useReplayData(
     ARCHIVE_REPLAY_MINUTES,
     replayRefreshKey,
     replayAnchorAt,
-    mode === "live" ? live.liveUpdate : null,
+    null,
     access.verified && replayNeeded,
     access.requireVerification,
   )
@@ -225,14 +220,13 @@ export default function App() {
     ? null
     : mode === "replay"
     ? replayUpdateAt(replay.data, replayCursor)
-    : live.liveUpdate ?? latestReplayUpdate(replay.data)
+    : live.liveUpdate
   const activityChanges = useMemo(
     () => comparing
       ? comparisonChanges
-      : aggregateReplayChanges(
-        replay.data,
-        mode === "replay" ? replayCursor : undefined,
-      ),
+      : mode === "replay"
+        ? aggregateReplayChanges(replay.data, replayCursor)
+        : [],
     [comparing, comparisonChanges, mode, replay.data, replayCursor],
   )
   const stations = presentedData?.stations ?? []
@@ -401,14 +395,13 @@ export default function App() {
     comparisonFromAt: timelineMode === "compare"
       ? comparisonSnapshot?.sourceUpdatedAt ?? comparisonFromAt
       : null,
-    mapMode,
+    mapMode: "stations",
     camera,
   }, window.location.href), [
     camera,
     comparisonFromAt,
     comparisonSnapshot?.sourceUpdatedAt,
     filter,
-    mapMode,
     mode,
     search,
     selectedArchiveAt,
@@ -515,7 +508,7 @@ export default function App() {
               liveUpdate={displayedUpdate}
               locating={locating}
               mapBackground={mapBackground}
-              mapMode={mode === "replay" ? comparing ? "heatmap" : "stations" : mapMode}
+              mapMode={comparing ? "heatmap" : "stations"}
               mode={mode}
               onCameraChange={changeCamera}
               onLocate={locate}
@@ -533,10 +526,8 @@ export default function App() {
             frameCount={replay.data?.frames.length ?? (snapshot.data === null ? 0 : 1)}
             latestAt={live.data?.sourceUpdatedAt ?? null}
             loading={archiveLoading}
-            mapMode={mapMode}
             mode={mode}
             onComparisonChange={changeComparison}
-            onMapModeChange={setMapMode}
             onModeChange={changeMode}
             onPlayingChange={changePlaying}
             onSelectedAtChange={selectArchiveAt}

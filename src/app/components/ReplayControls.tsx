@@ -1,14 +1,12 @@
 import { RangeSlider, Slider } from "@mantine/core"
 import {
   IconArrowsDiff,
-  IconFlame,
   IconHistory,
-  IconMap,
   IconPlayerPauseFilled,
   IconPlayerPlayFilled,
   IconShare3,
   IconTimeline,
-  IconWifi,
+  IconX,
 } from "@tabler/icons-react"
 import { useEffect, useMemo, useState } from "react"
 import { useI18n } from "../i18n"
@@ -22,7 +20,6 @@ import {
 } from "../archive"
 import type {
   DataMode,
-  MapMode,
   PlaybackSpeed,
   TimelineMode,
 } from "../types"
@@ -36,7 +33,6 @@ import {
 
 interface ReplayControlsProps {
   readonly mode: DataMode
-  readonly mapMode: MapMode
   readonly timelineMode: TimelineMode
   readonly speed: PlaybackSpeed
   readonly frameCount: number
@@ -49,7 +45,6 @@ interface ReplayControlsProps {
   readonly playbackLoading: boolean
   readonly shareConfirmed: boolean
   readonly onModeChange: (mode: DataMode) => void
-  readonly onMapModeChange: (mode: MapMode) => void
   readonly onTimelineModeChange: (mode: TimelineMode) => void
   readonly onSelectedAtChange: (timestamp: number) => void
   readonly onComparisonChange: (value: readonly [number, number]) => void
@@ -63,7 +58,6 @@ const sevenDayRange = "7d" as const
 
 export const ReplayControls = ({
   mode,
-  mapMode,
   timelineMode,
   speed,
   frameCount,
@@ -76,7 +70,6 @@ export const ReplayControls = ({
   playbackLoading,
   shareConfirmed,
   onModeChange,
-  onMapModeChange,
   onTimelineModeChange,
   onSelectedAtChange,
   onComparisonChange,
@@ -148,17 +141,6 @@ export const ReplayControls = ({
         {copy.archives}
       </button>
       <button
-        aria-label={mapMode === "stations" ? copy.showVariations : copy.showStations}
-        aria-pressed={mapMode === "heatmap"}
-        className="replay-tool-button"
-        onClick={() => onMapModeChange(mapMode === "stations" ? "heatmap" : "stations")}
-        title={mapMode === "stations" ? copy.showVariationAreas : copy.showStations}
-        type="button"
-      >
-        {mapMode === "stations" ? <IconFlame size={18} /> : <IconMap size={18} />}
-        <span>{mapMode === "stations" ? copy.variations : copy.stations}</span>
-      </button>
-      <button
         aria-label={shareConfirmed ? copy.linkCopied : copy.shareView}
         className="replay-tool-button replay-share-button"
         onClick={onShare}
@@ -185,6 +167,7 @@ export const ReplayControls = ({
           className="replay-deck"
           data-compact={compact || undefined}
           data-loading={loading || undefined}
+          data-timeline-mode={timelineMode}
         >
           <header className="archive-primary-head">
             <div className="archive-title">
@@ -217,8 +200,14 @@ export const ReplayControls = ({
             )}
 
             <div className="archive-head-actions">
-              <button onClick={() => onModeChange("live")} type="button">
-                <IconWifi size={17} /> {copy.live}
+              <button
+                aria-label={copy.closeArchives}
+                className="archive-close-button"
+                onClick={() => onModeChange("live")}
+                title={copy.closeArchives}
+                type="button"
+              >
+                <IconX size={17} /> <span>{copy.close}</span>
               </button>
               <button
                 aria-label={shareConfirmed ? copy.linkCopied : copy.shareView}
