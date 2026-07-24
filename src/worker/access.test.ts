@@ -114,6 +114,29 @@ it.effect("rate limits Turnstile verification attempts before Siteverify", () =>
   ),
 )
 
+it.effect("preserves Siteverify outages after the bounded retry", () => {
+  let attempts = 0
+  const unavailableSiteverify: typeof fetch = () => {
+    attempts += 1
+    return Promise.reject(new Error("Siteverify unavailable"))
+  }
+
+  return Effect.gen(function*() {
+    const access = yield* AccessControl
+    const error = yield* access.create(request(), "valid-token").pipe(Effect.flip)
+
+    assert.strictEqual(error._tag, "TurnstileUnavailable")
+    assert.strictEqual(attempts, 2)
+  }).pipe(
+    Effect.provide(
+      makeAccessControlLive(
+        productionEnvironment(allowingRateLimiter, allowingRateLimiter),
+        unavailableSiteverify,
+      ),
+    ),
+  )
+})
+
 it("aborts Siteverify when the request effect is interrupted", async () => {
   let resolveStarted: (() => void) | undefined
   const started = new Promise<void>((resolve) => {

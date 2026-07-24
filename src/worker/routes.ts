@@ -3,6 +3,7 @@ import { Effect, Schema } from "effect"
 import {
   AccessControl,
   RateLimitExceeded,
+  TurnstileUnavailable,
   VerificationFailed
 } from "./access"
 import { type SessionCryptoError } from "./signing"
@@ -264,6 +265,12 @@ export const handleRequest = (request: Request) =>
         ),
       VerificationFailed: (error: VerificationFailed) =>
         Effect.succeed(errorResponse(403, "verification_failed", error.message)),
+      TurnstileUnavailable: (_error: TurnstileUnavailable) =>
+        Effect.succeed(errorResponse(
+          503,
+          "verification_unavailable",
+          "Human verification is temporarily unavailable"
+        )),
       RateLimitExceeded: (error: RateLimitExceeded) =>
         Effect.succeed(jsonResponse(
           { error: { code: "rate_limited", message: error.message } },

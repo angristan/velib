@@ -56,7 +56,7 @@ export class RateLimitExceeded extends Schema.TaggedErrorClass<RateLimitExceeded
   { retryAfter: Schema.Number, message: Schema.String }
 ) {}
 
-class TurnstileUnavailable extends Schema.TaggedErrorClass<TurnstileUnavailable>()(
+export class TurnstileUnavailable extends Schema.TaggedErrorClass<TurnstileUnavailable>()(
   "TurnstileUnavailable",
   { cause: Schema.Defect() }
 ) {}
@@ -98,7 +98,7 @@ export class AccessControl extends Context.Service<AccessControl, {
     token: string
   ) => Effect.Effect<
     CreatedSession,
-    VerificationFailed | RateLimitExceeded | SessionCryptoError
+    VerificationFailed | RateLimitExceeded | SessionCryptoError | TurnstileUnavailable
   >
   readonly authorize: (
     request: Request
@@ -314,12 +314,9 @@ export const makeAccessControlLive = (
       crypto.randomUUID()
     ).pipe(
       Effect.retry(TURNSTILE_RETRY_POLICY),
-      Effect.mapError((error) => {
-        console.warn("Turnstile Siteverify unavailable", {
-          errorTag: error._tag
-        })
-        return VerificationFailed.make({ message: "Turnstile verification failed" })
-      })
+      Effect.tapError((error) => Effect.logWarning("Turnstile Siteverify unavailable", {
+        errorTag: error._tag
+      }))
     )
     const actionMatches = outcome.action === TURNSTILE_ACTION
     const hostnameMatches = config.turnstileHostname.length === 0 ||
