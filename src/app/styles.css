@@ -436,7 +436,7 @@ a { color: inherit; }
   position: absolute;
   z-index: 6;
   right: 9px;
-  bottom: 83px;
+  bottom: 126px;
   width: 32px;
   height: 32px;
   min-width: 32px;
@@ -765,6 +765,23 @@ a { color: inherit; }
 .view-option { display: flex; align-items: center; justify-content: center; gap: 5px; }
 .sr-only { position: absolute !important; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
 
+@media (min-width: 900px) {
+  .station-sidebar {
+    inset: 12px auto 12px 12px;
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    box-shadow: 0 10px 30px rgba(16, 31, 52, .16), 0 2px 8px rgba(16, 31, 52, .08);
+    opacity: 1;
+  }
+  .workspace[data-explorer-open="false"] .station-sidebar {
+    opacity: 0;
+    transform: translateX(calc(-100% - 24px));
+  }
+  .explorer-edge-toggle { left: calc(var(--explorer-width) + 11px); }
+  .map-caption, .live-map-update, .map-legend { left: calc(var(--explorer-width) + 28px); }
+  .map-legend { max-width: calc(100% - var(--explorer-width) - 104px); }
+}
+
 @media (max-width: 1120px) {
   .app-header { grid-template-columns: 190px minmax(0, 1fr) auto; }
   .brand-tagline { display: none; }
@@ -818,10 +835,10 @@ a { color: inherit; }
   .map-data-status { position: absolute; z-index: 5; top: 8px; left: 8px; display: inline-flex; max-width: calc(100% - 106px); padding: 4px 6px; overflow: hidden; border: 1px solid var(--line); border-radius: 4px; background: var(--surface); box-shadow: var(--shadow-float); font-size: 8px; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
   .map-shell[data-mode="replay"] .map-data-status { display: none; }
   .live-map-update { top: 36px; left: 8px !important; }
-  .map-legend { left: 8px !important; bottom: 20px; max-width: calc(100% - 54px) !important; gap: 4px 8px; }
+  .map-legend { left: 8px !important; bottom: 104px; max-width: calc(100% - 54px) !important; gap: 4px 8px; }
   .map-legend .legend-hint { display: none; }
-  .locate-button { right: 7px; bottom: 74px; width: 30px; height: 30px; min-width: 30px; min-height: 30px; }
-  .nearby-badge { right: 44px; bottom: 80px; }
+  .locate-button { right: 7px; bottom: 159px; width: 30px; height: 30px; min-width: 30px; min-height: 30px; }
+  .nearby-badge { right: 44px; bottom: 165px; }
   .maplibregl-ctrl-bottom-right { right: 0 !important; bottom: 15px !important; }
   .maplibregl-ctrl-group button { width: 30px !important; height: 30px !important; }
   .replay-controls { top: 8px; right: 8px; max-width: calc(100% - 16px); }
