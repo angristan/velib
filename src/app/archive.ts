@@ -27,18 +27,24 @@ export const archiveTimestampAtScale = (position: number, latestAt: number): num
   return latestAt - age
 }
 
-export const archiveScaleLandmarks = (latestAt: number): ReadonlyArray<{
+export const archiveScaleLandmarks = (
+  latestAt: number,
+  labels: { readonly dayShort: string; readonly now: string } = {
+    dayShort: "j",
+    now: "Maintenant",
+  },
+): ReadonlyArray<{
   readonly label: string
   readonly position: number
   readonly timestamp: number
 }> => [
-  { label: "−7 j", timestamp: latestAt - ARCHIVE_RETENTION_MS },
-  { label: "−3 j", timestamp: latestAt - 3 * DAY_MS },
+  { label: `−7 ${labels.dayShort}`, timestamp: latestAt - ARCHIVE_RETENTION_MS },
+  { label: `−3 ${labels.dayShort}`, timestamp: latestAt - 3 * DAY_MS },
   { label: "−24 h", timestamp: latestAt - DAY_MS },
   { label: "−6 h", timestamp: latestAt - 6 * HOUR_MS },
   { label: "−1 h", timestamp: latestAt - HOUR_MS },
   { label: "−15 min", timestamp: latestAt - 15 * MINUTE_MS },
-  { label: "Maintenant", timestamp: latestAt },
+  { label: labels.now, timestamp: latestAt },
 ].map((landmark) => ({
   ...landmark,
   position: archiveScalePosition(landmark.timestamp, latestAt),
@@ -46,13 +52,12 @@ export const archiveScaleLandmarks = (latestAt: number): ReadonlyArray<{
 
 export const timelineRanges: ReadonlyArray<{
   readonly value: TimelineRange
-  readonly label: string
   readonly durationMs: number
 }> = [
-  { value: "1h", label: "1 h", durationMs: HOUR_MS },
-  { value: "6h", label: "6 h", durationMs: 6 * HOUR_MS },
-  { value: "1d", label: "24 h", durationMs: DAY_MS },
-  { value: "7d", label: "7 j", durationMs: ARCHIVE_RETENTION_MS },
+  { value: "1h", durationMs: HOUR_MS },
+  { value: "6h", durationMs: 6 * HOUR_MS },
+  { value: "1d", durationMs: DAY_MS },
+  { value: "7d", durationMs: ARCHIVE_RETENTION_MS },
 ]
 
 export const timelineDuration = (range: TimelineRange): number =>

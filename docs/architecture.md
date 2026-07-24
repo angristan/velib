@@ -91,7 +91,7 @@ The Worker handles these routes:
 
 Workers Static Assets serves the Vite-built React application. `run_worker_first` routes `/api/*` through Worker code while unknown interface paths use SPA fallback behavior.
 
-The client uses React, Mantine, TanStack Query, and MapLibre. TanStack Query owns canonical live state, archive snapshots, replay windows, station-history caches, cancellation, and bounded retry policy. A separate subscription hook owns WebSocket connection and reconciliation state and writes validated updates into the Query cache. URL state captures the map camera, filters, selection, layer, replay window, and replay timestamp so views remain shareable.
+The client uses React, Mantine, TanStack Query, and MapLibre. A typed client-side locale provider owns French and English copy, locale-aware formatting, browser-language detection, and the persisted language preference. TanStack Query owns canonical live state, archive snapshots, replay windows, station-history caches, cancellation, and bounded retry policy. A separate subscription hook owns WebSocket connection and reconciliation state and writes validated updates into the Query cache. URL state captures the map camera, filters, selection, layer, replay window, and replay timestamp so views remain shareable.
 
 ## Caching and consistency
 

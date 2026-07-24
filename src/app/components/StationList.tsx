@@ -18,6 +18,7 @@ import {
 } from "@tabler/icons-react"
 import { useVirtualizer } from "@tanstack/react-virtual"
 import { useEffect, useMemo, useRef } from "react"
+import { useI18n } from "../i18n"
 import type { Station, StationFilter, UserLocation } from "../types"
 import {
   stationBikes,
@@ -25,7 +26,7 @@ import {
   stationMatchesFilter,
   stationMatchesQuery,
 } from "../types"
-import { distanceInMeters, formatDistance } from "../utils"
+import { distanceInMeters, formatDistance, formatNumber } from "../utils"
 
 interface StationListProps {
   readonly stations: readonly Station[]
@@ -38,14 +39,6 @@ interface StationListProps {
   readonly onSelect: (station: Station) => void
 }
 
-const filterOptions: ReadonlyArray<{ value: StationFilter; label: string }> = [
-  { value: "all", label: "Toutes" },
-  { value: "bikes", label: "Vélos" },
-  { value: "electric", label: "Élect." },
-  { value: "docks", label: "Places" },
-  { value: "attention", label: "Alertes" },
-]
-
 export const StationList = ({
   stations,
   selectedCode,
@@ -56,6 +49,15 @@ export const StationList = ({
   onFilterChange,
   onSelect,
 }: StationListProps) => {
+  const { locale, localeTag, messages } = useI18n()
+  const copy = messages.stationList
+  const filterOptions: ReadonlyArray<{ value: StationFilter; label: string }> = [
+    { value: "all", label: copy.filters.all },
+    { value: "bikes", label: copy.filters.bikes },
+    { value: "electric", label: copy.filters.electric },
+    { value: "docks", label: copy.filters.docks },
+    { value: "attention", label: copy.filters.attention },
+  ]
   const visibleStations = useMemo(() => {
     const matching = stations.filter((station) =>
       stationMatchesQuery(station, search) && stationMatchesFilter(station, filter)
@@ -65,9 +67,9 @@ export const StationList = ({
       if (userLocation) {
         return distanceInMeters(userLocation, left) - distanceInMeters(userLocation, right)
       }
-      return left.name.localeCompare(right.name, "fr")
+      return left.name.localeCompare(right.name, localeTag)
     })
-  }, [filter, search, stations, userLocation])
+  }, [filter, localeTag, search, stations, userLocation])
   const viewportRef = useRef<HTMLDivElement>(null)
   const rowVirtualizer = useVirtualizer({
     count: visibleStations.length,
@@ -95,27 +97,27 @@ export const StationList = ({
   }
 
   return (
-    <aside className="station-sidebar" id="station-explorer" aria-label="Liste des stations">
+    <aside className="station-sidebar" id="station-explorer" aria-label={copy.ariaLabel}>
       <div className="station-sidebar__heading">
         <Group justify="space-between" align="flex-end">
           <div>
-            <Text className="eyebrow">Explorer</Text>
-            <Text component="h1" className="sidebar-title">Stations</Text>
+            <Text className="eyebrow">{copy.eyebrow}</Text>
+            <Text component="h1" className="sidebar-title">{copy.title}</Text>
           </div>
           <Badge variant="light" size="md" className="station-count">
-            {visibleStations.length} / {stations.length}
+            {formatNumber(visibleStations.length, locale)} / {formatNumber(stations.length, locale)}
           </Badge>
         </Group>
 
         <TextInput
-          aria-label="Rechercher une station"
+          aria-label={copy.search}
           className="station-search"
           leftSection={<IconSearch size={18} />}
           onChange={(event) => onSearchChange(event.currentTarget.value)}
-          placeholder="Rechercher une station"
+          placeholder={copy.search}
           rightSection={search ? (
             <ActionIcon
-              aria-label="Effacer la recherche"
+              aria-label={copy.clearSearch}
               color="gray"
               onClick={() => onSearchChange("")}
               size="sm"
@@ -128,7 +130,7 @@ export const StationList = ({
           value={search}
         />
 
-        <div className="station-filters" role="group" aria-label="Filtrer les stations">
+        <div className="station-filters" role="group" aria-label={copy.filtersLabel}>
           {filterOptions.map((option) => (
             <button
               aria-pressed={filter === option.value}
@@ -150,7 +152,7 @@ export const StationList = ({
         viewportRef={viewportRef}
       >
         <ul
-          aria-label={`${visibleStations.length} stations affichées`}
+          aria-label={copy.displayed(visibleStations.length)}
           className="station-list"
           style={{ height: rowVirtualizer.getTotalSize() }}
         >
@@ -194,18 +196,18 @@ export const StationList = ({
                 >
                   <div className="station-row__topline">
                     <Text className="station-name" lineClamp={1}>{station.name}</Text>
-                    {distance !== null && <Text className="station-distance">{formatDistance(distance)}</Text>}
+                    {distance !== null && <Text className="station-distance">{formatDistance(distance, locale)}</Text>}
                   </div>
-                  <Text className="station-code">N° {station.code}</Text>
+                  <Text className="station-code">{messages.common.stationNumber} {station.code}</Text>
 
                   {isUnavailable ? (
-                    <div className="station-unavailable"><IconAlertCircle size={15} /> Indisponible</div>
+                    <div className="station-unavailable"><IconAlertCircle size={15} /> {copy.unavailable}</div>
                   ) : (
                     <div className="station-metrics">
-                      <span className="metric metric--bike"><IconBike size={15} /><b>{station.mechanical}</b><small>méca.</small></span>
-                      <span className="metric metric--electric"><IconBolt size={15} /><b>{station.electric}</b><small>élec.</small></span>
-                      <span className="metric metric--dock"><IconParking size={15} /><b>{station.docks}</b><small>places</small></span>
-                      <span className="availability-bar" aria-label={`${totalBikes} vélos sur ${station.capacity} emplacements`}>
+                      <span className="metric metric--bike"><IconBike size={15} /><b>{station.mechanical}</b><small>{copy.mechanicalShort}</small></span>
+                      <span className="metric metric--electric"><IconBolt size={15} /><b>{station.electric}</b><small>{copy.electricShort}</small></span>
+                      <span className="metric metric--dock"><IconParking size={15} /><b>{station.docks}</b><small>{copy.docksShort}</small></span>
+                      <span className="availability-bar" aria-label={copy.capacity(totalBikes, station.capacity)}>
                         <i style={{ width: `${Math.min(100, (totalBikes / Math.max(1, station.capacity)) * 100)}%` }} />
                       </span>
                     </div>
@@ -217,14 +219,14 @@ export const StationList = ({
         </ul>
 
         {visibleStations.length === 0 && (
-          <Alert className="no-results" color="gray" icon={<IconSearch size={18} />} title="Aucune station trouvée">
-            Essayez un autre nom ou élargissez les filtres.
+          <Alert className="no-results" color="gray" icon={<IconSearch size={18} />} title={copy.noResults}>
+            {copy.noResultsHint}
           </Alert>
         )}
       </ScrollArea>
 
       <footer className="station-data-credit">
-        Service non officiel · Données{" "}
+        {copy.unofficial} · {copy.data}{" "}
         <a
           href="https://www.velib-metropole.fr/donnees-open-data-gbfs-du-service-velib-metropole"
           rel="noreferrer"
@@ -238,7 +240,7 @@ export const StationList = ({
           rel="noreferrer"
           target="_blank"
         >
-          Licence Ouverte
+          {copy.openLicence}
         </a>
       </footer>
     </aside>

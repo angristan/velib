@@ -13,6 +13,8 @@ import {
 } from "@mantine/core"
 import { useMediaQuery } from "@mantine/hooks"
 import { lazy, Suspense, useEffect, useRef } from "react"
+import { useI18n } from "../i18n"
+import type { AppLocale } from "../locale"
 import {
   IconArrowsDiff,
   IconBike,
@@ -66,15 +68,17 @@ const MetricTile = ({
   value,
   label,
   tone,
+  locale,
 }: {
   readonly icon: React.ReactNode
   readonly value: number
   readonly label: string
   readonly tone: string
+  readonly locale: AppLocale
 }) => (
   <div className={`detail-metric detail-metric--${tone}`}>
     <span>{icon}</span>
-    <b>{formatNumber(value)}</b>
+    <b>{formatNumber(value, locale)}</b>
     <small title={label}>{label}</small>
   </div>
 )
@@ -106,6 +110,8 @@ const DetailContent = ({
   onRangeChange,
   onSelect,
 }: Omit<StationDetailsProps, "station" | "onClose" | "onMobileCloseFocus"> & { readonly station: Station }) => {
+  const { locale, messages } = useI18n()
+  const copy = messages.details
   const bikes = stationBikes(station)
   const capacityScale = Math.max(
     1,
@@ -126,23 +132,23 @@ const DetailContent = ({
       <div className="station-hero">
         <Group gap="sm" mb={8}>
           <Badge color={operative ? "green" : "gray"} size="md" variant="light">
-            {operative ? "Station ouverte" : "Station indisponible"}
+            {operative ? copy.open : copy.unavailable}
           </Badge>
-          <Text className="detail-code">N° {station.code}</Text>
+          <Text className="detail-code">{messages.common.stationNumber} {station.code}</Text>
         </Group>
         <Text component="h2" id="station-detail-title" className="detail-title">{station.name}</Text>
         {comparison && (
-          <span className="capacity-context">Instant B · {formatArchiveTimestamp(comparison.toAt)}</span>
+          <span className="capacity-context">{copy.selectedMoment} · {formatArchiveTimestamp(comparison.toAt, locale)}</span>
         )}
         <div className="capacity-summary">
           <div>
             <strong>{bikes}</strong>
-            <span>vélos disponibles</span>
+            <span>{copy.availableBikes}</span>
           </div>
-          <Text>{station.docks} places libres sur {station.capacity}</Text>
+          <Text>{copy.freeDocks(station.docks, station.capacity)}</Text>
         </div>
         <Progress.Root
-          aria-label={`${bikes} vélos, ${station.docks} places libres et ${station.unavailable} emplacements indisponibles sur ${station.capacity}`}
+          aria-label={copy.capacity(bikes, station.docks, station.unavailable, station.capacity)}
           className="capacity-progress"
           radius="xl"
           size="sm"
@@ -152,31 +158,31 @@ const DetailContent = ({
           <Progress.Section color="red.6" value={unavailablePercent} />
         </Progress.Root>
         {comparison && (
-          <section className="station-comparison" aria-label="Comparaison de disponibilité entre A et B">
+          <section className="station-comparison" aria-label={copy.comparisonLabel}>
             <header className="station-comparison__title">
               <span><IconArrowsDiff size={17} /></span>
               <div>
-                <b>Évolution A → B</b>
-                <small>{formatArchiveDuration(comparison.fromAt, comparison.toAt)}</small>
+                <b>{copy.comparisonTitle}</b>
+                <small>{formatArchiveDuration(comparison.fromAt, comparison.toAt, locale)}</small>
               </div>
               <em data-direction={comparisonBikeDelta > 0 ? "up" : comparisonBikeDelta < 0 ? "down" : "neutral"}>
-                {comparisonBikeDelta > 0 ? "+" : ""}{comparisonBikeDelta} vélo{Math.abs(comparisonBikeDelta) === 1 ? "" : "s"}
+                {copy.bikeDelta(comparisonBikeDelta)}
               </em>
             </header>
             <div className="station-comparison__endpoints">
-              <span><b>A</b>{formatArchiveTimestamp(comparison.fromAt)}</span>
-              <span><b>B</b>{formatArchiveTimestamp(comparison.toAt)}</span>
+              <span><b>{copy.before}</b>{formatArchiveTimestamp(comparison.fromAt, locale)}</span>
+              <span><b>{copy.after}</b>{formatArchiveTimestamp(comparison.toAt, locale)}</span>
             </div>
             <table>
-              <caption className="sr-only">Valeurs à l’instant A, à l’instant B et différence</caption>
+              <caption className="sr-only">{copy.comparisonCaption}</caption>
               <thead>
-                <tr><th>Mesure</th><th>A</th><th>B</th><th>Δ</th></tr>
+                <tr><th>{copy.measure}</th><th>{copy.before}</th><th>{copy.after}</th><th>Δ</th></tr>
               </thead>
               <tbody>
                 {[
-                  ["Mécaniques", comparison.from.mechanical, station.mechanical],
-                  ["Électriques", comparison.from.electric, station.electric],
-                  ["Places libres", comparison.from.docks, station.docks],
+                  [messages.common.mechanical, comparison.from.mechanical, station.mechanical],
+                  [messages.common.electric, comparison.from.electric, station.electric],
+                  [messages.common.freeDocks, comparison.from.docks, station.docks],
                 ].map(([label, from, to]) => {
                   const delta = Number(to) - Number(from)
                   return (
@@ -218,16 +224,16 @@ const DetailContent = ({
               )}
               {variation.mechanicalDelta === 0 &&
                 variation.electricDelta === 0 &&
-                variation.docksDelta === 0 && <span>Statut actualisé</span>}
+                variation.docksDelta === 0 && <span>{copy.statusUpdated}</span>}
             </div>
           </div>
         )}
         {trend.deltas.length > 0 && (
-          <section className="station-streak" aria-label="Variations récentes de disponibilité">
+          <section className="station-streak" aria-label={copy.recentVariations}>
             <div className="station-streak__heading">
               <span>
-                <b>Dernières variations</b>
-                <small>Disponibilité totale des vélos</small>
+                <b>{copy.lastVariations}</b>
+                <small>{copy.totalAvailability}</small>
               </span>
               <div className="station-streak__values" aria-label={trend.deltas.join(", ")}>
                 {trend.deltas.map((delta, index) => (
@@ -251,10 +257,10 @@ const DetailContent = ({
       </div>
 
       <div className="detail-metrics">
-        <MetricTile icon={<IconBike size={22} />} value={station.mechanical} label="Mécaniques" tone="green" />
-        <MetricTile icon={<IconBolt size={22} />} value={station.electric} label="Électriques" tone="blue" />
-        <MetricTile icon={<IconParking size={22} />} value={station.docks} label="Places libres" tone="gray" />
-        <MetricTile icon={<IconParkingOff size={22} />} value={station.unavailable} label="Indisponibles" tone="red" />
+        <MetricTile icon={<IconBike size={22} />} value={station.mechanical} label={messages.common.mechanical} locale={locale} tone="green" />
+        <MetricTile icon={<IconBolt size={22} />} value={station.electric} label={messages.common.electric} locale={locale} tone="blue" />
+        <MetricTile icon={<IconParking size={22} />} value={station.docks} label={messages.common.freeDocks} locale={locale} tone="gray" />
+        <MetricTile icon={<IconParkingOff size={22} />} value={station.unavailable} label={messages.common.unavailable} locale={locale} tone="red" />
       </div>
 
       <Button
@@ -267,13 +273,13 @@ const DetailContent = ({
         target="_blank"
         variant="filled"
       >
-        Itinéraire
+        {copy.directions}
       </Button>
 
       {historyEnabled ? (
         <Suspense
           fallback={(
-            <section aria-busy="true" aria-label="Chargement du graphique" className="history-section">
+            <section aria-busy="true" aria-label={copy.chartLoading} className="history-section">
               <Skeleton height={24} width="45%" />
               <Skeleton height={250} mt="md" radius="md" />
             </section>
@@ -289,24 +295,24 @@ const DetailContent = ({
         </Suspense>
       ) : (
         <section className="replay-detail-note">
-          <b>Contexte de relecture</b>
-          <span>Les compteurs et la série ci-dessus correspondent à l’instant sélectionné.</span>
+          <b>{copy.replayContext}</b>
+          <span>{copy.replayContextHint}</span>
         </section>
       )}
 
       {nearby.length > 0 && (
         <section className="nearby-section" aria-labelledby="nearby-heading">
-          <Text className="eyebrow">À proximité</Text>
-          <Text component="h3" id="nearby-heading" className="nearby-title">Stations voisines</Text>
+          <Text className="eyebrow">{copy.nearbyEyebrow}</Text>
+          <Text component="h3" id="nearby-heading" className="nearby-title">{copy.nearbyTitle}</Text>
           <Stack component="ul" gap={7} mt="sm">
             {nearby.map((candidate) => (
               <li key={candidate.code}>
                 <UnstyledButton className="nearby-row" onClick={() => onSelect(candidate)}>
                   <span>
                     <b>{candidate.name}</b>
-                    <small>{stationBikes(candidate)} vélos · {candidate.docks} places</small>
+                    <small>{copy.nearbySummary(stationBikes(candidate), candidate.docks)}</small>
                   </span>
-                  <Text>{formatDistance(distanceInMeters(station, candidate))}</Text>
+                  <Text>{formatDistance(distanceInMeters(station, candidate), locale)}</Text>
                 </UnstyledButton>
               </li>
             ))}
@@ -320,6 +326,8 @@ const DetailContent = ({
 const mediaQueryOptions = { getInitialValueInEffect: false } as const
 
 export const StationDetails = (props: StationDetailsProps) => {
+  const { messages } = useI18n()
+  const copy = messages.details
   const useDrawer = useMediaQuery("(max-width: 1100px)", undefined, mediaQueryOptions)
   const useMobileReturnTarget = useMediaQuery(
     "(max-width: 899px)",
@@ -355,12 +363,13 @@ export const StationDetails = (props: StationDetailsProps) => {
     return (
       <Drawer
         classNames={{ content: "station-drawer", body: "station-drawer__body", header: "station-drawer__header" }}
+        closeButtonProps={{ "aria-label": copy.close }}
         onClose={closeDrawer}
         opened
         position="bottom"
         returnFocus={!useMobileReturnTarget}
         size="88%"
-        title={<Text fw={800} size="lg">Détail de la station</Text>}
+        title={<Text fw={800} size="lg">{copy.drawerTitle}</Text>}
       >
         {content}
       </Drawer>
@@ -374,9 +383,9 @@ export const StationDetails = (props: StationDetailsProps) => {
       ref={panelRef}
       tabIndex={-1}
     >
-      <Tooltip label="Fermer le détail">
+      <Tooltip label={copy.close}>
         <ActionIcon
-          aria-label="Fermer le détail"
+          aria-label={copy.close}
           className="detail-close"
           onClick={onClose}
           variant="subtle"

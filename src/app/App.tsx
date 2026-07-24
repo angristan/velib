@@ -30,6 +30,7 @@ import { ReplayControls } from "./components/ReplayControls"
 import { StationList } from "./components/StationList"
 import { TurnstileGate } from "./components/TurnstileGate"
 import { useAccessSession } from "./hooks/useAccessSession"
+import { useI18n } from "./i18n"
 import {
   useArchiveSnapshot,
   useLiveData,
@@ -79,22 +80,23 @@ type MobileView = "list" | "map"
 
 const ARCHIVE_REPLAY_MINUTES = 60 as const
 
-const viewOptions: ReadonlyArray<{ value: MobileView; label: React.ReactNode }> = [
-  {
-    value: "list",
-    label: <span className="view-option"><IconList size={16} /> Liste</span>,
-  },
-  {
-    value: "map",
-    label: <span className="view-option"><IconMap2 size={16} /> Carte</span>,
-  },
-]
-
 export default function App() {
   const initialUrlStateRef = useRef(parseAppUrlState(window.location.search))
   const initialUrlState = initialUrlStateRef.current
   const { setColorScheme } = useMantineColorScheme()
   const computedColorScheme = useComputedColorScheme("light")
+  const { locale, messages } = useI18n()
+  const copy = messages.app
+  const viewOptions: ReadonlyArray<{ value: MobileView; label: React.ReactNode }> = [
+    {
+      value: "list",
+      label: <span className="view-option"><IconList size={16} /> {copy.list}</span>,
+    },
+    {
+      value: "map",
+      label: <span className="view-option"><IconMap2 size={16} /> {copy.map}</span>,
+    },
+  ]
   const access = useAccessSession()
   const live = useLiveData(!access.checked || access.verified, access.requireVerification)
   const [selectedCode, setSelectedCode] = useState<string | null>(initialUrlState.selectedCode)
@@ -298,7 +300,7 @@ export default function App() {
 
   const locate = useCallback(() => {
     if (!("geolocation" in navigator)) {
-      setLocationError("La géolocalisation n’est pas disponible sur cet appareil.")
+      setLocationError(copy.geolocationUnavailable)
       return
     }
 
@@ -314,12 +316,12 @@ export default function App() {
         setLocating(false)
       },
       () => {
-        setLocationError("Position introuvable. Vérifiez l’autorisation de géolocalisation.")
+        setLocationError(copy.geolocationDenied)
         setLocating(false)
       },
       { enableHighAccuracy: true, maximumAge: 30_000, timeout: 10_000 },
     )
-  }, [])
+  }, [copy.geolocationDenied, copy.geolocationUnavailable])
 
   const changeFilter = useCallback((value: StationFilter) => {
     setFilter(value)
@@ -443,24 +445,24 @@ export default function App() {
       />
 
       {((live.error && live.data) || archiveError || replay.error || locationError) && (
-        <div className="notification-stack" aria-label="Notifications">
+        <div className="notification-stack" aria-label={copy.notifications}>
           {live.error && live.data && (
             <Alert
               className="connection-warning"
               color="orange"
               icon={<IconCloudOff size={18} />}
-              title="Actualisation interrompue"
+              title={copy.updateInterrupted}
             >
-              Les dernières données reçues restent visibles et sont clairement datées.
+              {copy.staleDataHint}
             </Alert>
           )}
           {archiveError && (
-            <Alert color="orange" title={comparing ? "Comparaison indisponible" : "Archive indisponible"}>
+            <Alert color="orange" title={comparing ? copy.comparisonUnavailable : copy.archiveUnavailable}>
               {archiveError}
             </Alert>
           )}
           {replay.error && (
-            <Alert color="orange" title="Relecture indisponible">{replay.error}</Alert>
+            <Alert color="orange" title={copy.replayUnavailable}>{replay.error}</Alert>
           )}
           {locationError && (
             <Alert
@@ -494,22 +496,22 @@ export default function App() {
           <button
             aria-controls="station-explorer"
             aria-expanded={explorerOpen}
-            aria-label={explorerOpen ? "Masquer l’explorateur des stations" : "Afficher l’explorateur des stations"}
+            aria-label={explorerOpen ? copy.hideExplorer : copy.showExplorer}
             className="explorer-edge-toggle"
             onClick={() => setExplorerOpen((current) => !current)}
-            title={explorerOpen ? "Masquer l’explorateur" : "Afficher l’explorateur"}
+            title={explorerOpen ? copy.hideExplorerShort : copy.showExplorerShort}
             type="button"
           >
             {explorerOpen ? <IconChevronLeft size={21} /> : <IconChevronRight size={21} />}
           </button>
-          <Suspense fallback={<div className="map-loading"><Text>Chargement de la carte…</Text></div>}>
+          <Suspense fallback={<div className="map-loading"><Text>{copy.loadingMap}</Text></div>}>
             <MapView
               activityChanges={activityChanges}
               comparing={comparing}
               connection={live.connection}
               dataError={live.error}
               initialCamera={camera}
-              key={mapBackground}
+              key={`${mapBackground}-${locale}`}
               liveUpdate={displayedUpdate}
               locating={locating}
               mapBackground={mapBackground}
@@ -550,14 +552,14 @@ export default function App() {
           />
           {stations.length === 0 && (
             <DataStateOverlay
-              actionLabel={mode === "replay" ? "Revenir au direct" : "Réessayer"}
+              actionLabel={mode === "replay" ? copy.returnLive : messages.common.retry}
               error={mode === "replay" ? archiveError : live.error}
               loading={mode === "replay" ? archiveLoading : live.loading}
               message={mode === "replay"
-                ? "Le point demandé est hors des sept jours conservés ou correspond à une interruption de collecte."
+                ? copy.archiveMissingHint
                 : undefined}
               onRefresh={mode === "replay" ? () => changeMode("live") : live.refresh}
-              title={mode === "replay" ? "Cette archive n’est plus disponible" : undefined}
+              title={mode === "replay" ? copy.archiveMissing : undefined}
             />
           )}
           {selected && (
@@ -577,7 +579,7 @@ export default function App() {
                 station={selected}
                 trend={selectedTrend}
                 variation={selectedVariation}
-                variationLabel={comparing ? "Solde B − A" : mode === "replay" ? "Variation rejouée" : "Variation en direct"}
+                variationLabel={comparing ? copy.balance : mode === "replay" ? copy.replayVariation : copy.liveVariation}
               />
             </Suspense>
           )}
@@ -585,7 +587,7 @@ export default function App() {
       </main>
 
       <div className="mobile-view-switcher">
-        <div className="view-switcher-control" role="group" aria-label="Choisir entre la liste et la carte">
+        <div className="view-switcher-control" role="group" aria-label={copy.chooseView}>
           {viewOptions.map((option) => (
             <button
               aria-pressed={mobileView === option.value}
@@ -612,7 +614,7 @@ export default function App() {
       )}
 
       <Text className="sr-only" aria-live="polite">
-        {selected ? `Station sélectionnée : ${selected.name}` : "Aucune station sélectionnée"}
+        {selected ? copy.selectedStation(selected.name) : copy.noSelectedStation}
       </Text>
     </div>
   )

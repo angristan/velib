@@ -1,5 +1,6 @@
 import { Button, Loader, Modal, Text, Title } from "@mantine/core"
 import { useEffect, useRef, useState } from "react"
+import { useI18n } from "../i18n"
 
 const TURNSTILE_SCRIPT =
   "https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit"
@@ -14,6 +15,7 @@ interface TurnstileApi {
       readonly theme: "auto"
       readonly action: "velib_access"
       readonly retry: "never"
+      readonly language: "fr" | "en"
       readonly "response-field": false
       readonly callback: (token: string) => void
       readonly "error-callback": (code: string) => void
@@ -80,12 +82,14 @@ export function TurnstileGate({
   onRetry,
   onToken,
 }: TurnstileGateProps) {
+  const { locale, messages } = useI18n()
+  const copy = messages.security
   const containerRef = useRef<HTMLDivElement>(null)
   const onTokenRef = useRef(onToken)
   const [forceVisible, setForceVisible] = useState(false)
   const [renderAttempt, setRenderAttempt] = useState(0)
   const [canRetry, setCanRetry] = useState(false)
-  const [message, setMessage] = useState("Vérification de sécurité…")
+  const [message, setMessage] = useState(copy.checking)
 
   useEffect(() => {
     onTokenRef.current = onToken
@@ -98,11 +102,7 @@ export function TurnstileGate({
     let widgetId: string | undefined
 
     setCanRetry(false)
-    setMessage(
-      forceVisible
-        ? "Confirmez que vous êtes humain."
-        : "Vérification de sécurité…",
-    )
+    setMessage(forceVisible ? copy.confirmHuman : copy.checking)
 
     const showVisibleFallback = (nextMessage: string): void => {
       if (!active) return
@@ -114,7 +114,7 @@ export function TurnstileGate({
     void loadTurnstile().then(() => {
       if (!active || containerRef.current === null) return
       if (window.turnstile === undefined) {
-        showVisibleFallback("La vérification est indisponible.")
+        showVisibleFallback(copy.unavailable)
         return
       }
 
@@ -125,42 +125,43 @@ export function TurnstileGate({
         theme: "auto",
         action: "velib_access",
         retry: "never",
+        language: locale,
         "response-field": false,
         callback: (token) => {
           if (submitting) return
           submitting = true
-          setMessage("Validation en cours…")
+          setMessage(copy.validating)
           void onTokenRef.current(token).then((verified) => {
             if (!active || verified) return
             submitting = false
-            showVisibleFallback("La vérification a échoué.")
+            showVisibleFallback(copy.failed)
           }).catch(() => {
             submitting = false
-            showVisibleFallback("La vérification est indisponible.")
+            showVisibleFallback(copy.unavailable)
           })
         },
         "error-callback": (code) => {
-          showVisibleFallback(`La vérification a échoué (code ${code}).`)
+          showVisibleFallback(copy.failedCode(code))
         },
         "expired-callback": () => {
-          showVisibleFallback("La vérification a expiré.")
+          showVisibleFallback(copy.expired)
         },
         "timeout-callback": () => {
-          showVisibleFallback("La vérification a expiré.")
+          showVisibleFallback(copy.expired)
         },
         "unsupported-callback": () => {
-          showVisibleFallback("Ce navigateur ne peut pas effectuer la vérification.")
+          showVisibleFallback(copy.unsupported)
         },
       })
     }).catch(() => {
-      showVisibleFallback("La vérification est indisponible.")
+      showVisibleFallback(copy.unavailable)
     })
 
     return () => {
       active = false
       if (widgetId !== undefined) window.turnstile?.remove(widgetId)
     }
-  }, [checked, error, forceVisible, renderAttempt, siteKey])
+  }, [checked, copy, error, forceVisible, locale, renderAttempt, siteKey])
 
   return (
     <Modal
@@ -183,18 +184,18 @@ export function TurnstileGate({
         order={2}
         tabIndex={-1}
       >
-        Accès à Vélib’ Pulse
+        {copy.title}
       </Title>
       <div aria-live="polite" className="verification-status">
         {!checked ? (
           <>
             <Loader size="sm" />
-            <Text size="sm" c="dimmed">Vérification de votre session…</Text>
+            <Text size="sm" c="dimmed">{copy.session}</Text>
           </>
         ) : error !== null ? (
           <>
             <Text size="sm" c="red">{error}</Text>
-            <Button onClick={onRetry} variant="light">Réessayer</Button>
+            <Button onClick={onRetry} variant="light">{messages.common.retry}</Button>
           </>
         ) : (
           <>
@@ -205,14 +206,14 @@ export function TurnstileGate({
                 onClick={() => setRenderAttempt((attempt) => attempt + 1)}
                 variant="light"
               >
-                Réessayer
+                {messages.common.retry}
               </Button>
             ) : null}
           </>
         )}
       </div>
       <Text className="verification-note" size="xs" c="dimmed">
-        Cette vérification protège le service public contre les requêtes automatisées abusives.
+        {copy.note}
       </Text>
     </Modal>
   )

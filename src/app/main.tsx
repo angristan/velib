@@ -10,6 +10,7 @@ import { QueryClientProvider } from "@tanstack/react-query"
 import { StrictMode } from "react"
 import { createRoot } from "react-dom/client"
 import App from "./App"
+import { I18nProvider } from "./i18n"
 import { createAppQueryClient } from "./query-client"
 
 const theme = createTheme({
@@ -31,9 +32,11 @@ if (!root) throw new Error("Point de montage React introuvable")
 createRoot(root).render(
   <StrictMode>
     <QueryClientProvider client={queryClient}>
-      <MantineProvider defaultColorScheme="auto" theme={theme}>
-        <App />
-      </MantineProvider>
+      <I18nProvider>
+        <MantineProvider defaultColorScheme="auto" theme={theme}>
+          <App />
+        </MantineProvider>
+      </I18nProvider>
     </QueryClientProvider>
   </StrictMode>,
 )

@@ -15,6 +15,8 @@ import {
   IconSun,
 } from "@tabler/icons-react"
 import { memo, useEffect, useMemo, useRef } from "react"
+import { useI18n } from "../i18n"
+import type { AppLocale } from "../locale"
 import type {
   LiveData,
   MapBackground,
@@ -35,14 +37,15 @@ interface KpiProps {
   readonly value: number
   readonly tone: "green" | "blue" | "navy"
   readonly pulse: boolean
+  readonly locale: AppLocale
 }
 
-const Kpi = ({ icon, label, value, tone, pulse }: KpiProps) => (
+const Kpi = ({ icon, label, value, tone, pulse, locale }: KpiProps) => (
   <div className={`network-kpi network-kpi--${tone}`}>
     <span className="network-kpi__icon" aria-hidden="true">{icon}</span>
     <span>
       <strong className={pulse ? "network-kpi__value--pulse" : undefined} key={value}>
-        {formatNumber(value)}
+        {formatNumber(value, locale)}
       </strong>
       <small>{label}</small>
     </span>
@@ -56,8 +59,10 @@ export const Header = memo(function Header({
   onColorSchemeChange,
   onRefresh,
 }: HeaderProps) {
+  const { locale, messages, setLocale } = useI18n()
+  const copy = messages.header
   const nextColorScheme = colorScheme === "dark" ? "light" : "dark"
-  const themeLabel = colorScheme === "dark" ? "Passer au thème clair" : "Passer au thème sombre"
+  const themeLabel = colorScheme === "dark" ? copy.lightTheme : copy.darkTheme
   const totals = useMemo(() => (data?.stations ?? []).reduce(
     (current, station) => ({
       mechanical: current.mechanical + station.mechanical,
@@ -78,11 +83,11 @@ export const Header = memo(function Header({
         <div className="brand-mark" aria-hidden="true"><IconBike size={25} stroke={2.4} /></div>
         <div>
           <Text className="brand-name">Vélib’ <em>Pulse</em></Text>
-          <Text className="brand-tagline">Observatoire du réseau</Text>
+          <Text className="brand-tagline">{copy.tagline}</Text>
         </div>
       </div>
 
-      <div className="network-kpis" aria-label="Disponibilité sur le réseau">
+      <div className="network-kpis" aria-label={copy.networkAvailability}>
         {loading && !data ? (
           <>
             <Skeleton className="kpi-skeleton" radius="md" />
@@ -93,21 +98,24 @@ export const Header = memo(function Header({
           <>
             <Kpi
               icon={<IconBike size={21} />}
-              label="Vélos mécaniques"
+              label={copy.mechanicalBikes}
+              locale={locale}
               pulse={previousTotals !== null && previousTotals.mechanical !== totals.mechanical}
               tone="green"
               value={totals.mechanical}
             />
             <Kpi
               icon={<IconBolt size={21} />}
-              label="Vélos électriques"
+              label={copy.electricBikes}
+              locale={locale}
               pulse={previousTotals !== null && previousTotals.electric !== totals.electric}
               tone="blue"
               value={totals.electric}
             />
             <Kpi
               icon={<IconParking size={21} />}
-              label="Places libres"
+              label={copy.freeDocks}
+              locale={locale}
               pulse={false}
               tone="navy"
               value={totals.docks}
@@ -117,6 +125,17 @@ export const Header = memo(function Header({
       </div>
 
       <Group gap="sm" className="header-actions" wrap="nowrap">
+        <Tooltip label={copy.switchLanguage}>
+          <ActionIcon
+            aria-label={copy.switchLanguage}
+            className="language-toggle"
+            onClick={() => setLocale(locale === "fr" ? "en" : "fr")}
+            size="lg"
+            variant="subtle"
+          >
+            <span aria-hidden="true">{copy.languageCode}</span>
+          </ActionIcon>
+        </Tooltip>
         <Tooltip label={themeLabel}>
           <ActionIcon
             aria-label={themeLabel}
@@ -128,9 +147,9 @@ export const Header = memo(function Header({
             {colorScheme === "dark" ? <IconSun size={19} /> : <IconMoonStars size={19} />}
           </ActionIcon>
         </Tooltip>
-        <Tooltip label="Voir le code source sur GitHub">
+        <Tooltip label={copy.sourceCode}>
           <ActionIcon
-            aria-label="Voir le code source sur GitHub"
+            aria-label={copy.sourceCode}
             className="github-button"
             component="a"
             href="https://github.com/angristan/velib"
@@ -142,9 +161,9 @@ export const Header = memo(function Header({
             <IconBrandGithub size={19} />
           </ActionIcon>
         </Tooltip>
-        <Tooltip label="Actualiser les données">
+        <Tooltip label={copy.refresh}>
           <ActionIcon
-            aria-label="Actualiser les données"
+            aria-label={copy.refresh}
             className="refresh-button"
             loading={loading}
             onClick={onRefresh}

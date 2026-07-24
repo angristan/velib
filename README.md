@@ -17,6 +17,7 @@ Vélib’ Pulse is an independent, unofficial service. It is not affiliated with
 - One-hour playback around any retained point, at multiple playback speeds.
 - Explicit before-and-after comparison with an automatic gain-and-loss heatmap and station-level deltas.
 - Shareable URLs that preserve the camera, filters, selection, map layer, archive time, and comparison.
+- French and English interface with a persisted language preference.
 - Light and dark map themes with responsive desktop and mobile layouts.
 
 ## Quick start

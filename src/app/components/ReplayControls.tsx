@@ -11,6 +11,7 @@ import {
   IconWifi,
 } from "@tabler/icons-react"
 import { useEffect, useMemo, useState } from "react"
+import { useI18n } from "../i18n"
 import {
   ARCHIVE_SCALE_MAX,
   archiveScaleLandmarks,
@@ -83,6 +84,8 @@ export const ReplayControls = ({
   onPlayingChange,
   onShare,
 }: ReplayControlsProps) => {
+  const { locale, messages } = useI18n()
+  const copy = messages.replay
   const committedAt = latestAt === null
     ? 0
     : clampTimelineAt(selectedAt ?? latestAt, latestAt, sevenDayRange)
@@ -114,8 +117,10 @@ export const ReplayControls = ({
   }, [committedComparisonPositions[0], committedComparisonPositions[1]])
 
   const landmarks = useMemo(
-    () => latestAt === null ? [] : archiveScaleLandmarks(latestAt),
-    [latestAt],
+    () => latestAt === null
+      ? []
+      : archiveScaleLandmarks(latestAt, { dayShort: copy.dayShort, now: copy.now }),
+    [copy.dayShort, copy.now, latestAt],
   )
   const disabled = loading || latestAt === null
   const draftAt = latestAt === null ? 0 : archiveTimestampAtScale(draftPosition, latestAt)
@@ -130,7 +135,7 @@ export const ReplayControls = ({
     : ARCHIVE_SCALE_MAX - archiveScalePosition(latestAt - 60_000, latestAt)
   const formatScaleValue = (position: number) => latestAt === null
     ? ""
-    : formatArchiveTimestamp(archiveTimestampAtScale(position, latestAt))
+    : formatArchiveTimestamp(archiveTimestampAtScale(position, latestAt), locale)
 
   const liveToolbar = mode === "live" && (
     <div className="replay-toolbar">
@@ -140,28 +145,28 @@ export const ReplayControls = ({
         type="button"
       >
         <IconHistory size={18} />
-        Archives
+        {copy.archives}
       </button>
       <button
-        aria-label={mapMode === "stations" ? "Afficher les variations" : "Afficher les stations"}
+        aria-label={mapMode === "stations" ? copy.showVariations : copy.showStations}
         aria-pressed={mapMode === "heatmap"}
         className="replay-tool-button"
         onClick={() => onMapModeChange(mapMode === "stations" ? "heatmap" : "stations")}
-        title={mapMode === "stations" ? "Afficher les zones de variation" : "Afficher les stations"}
+        title={mapMode === "stations" ? copy.showVariationAreas : copy.showStations}
         type="button"
       >
         {mapMode === "stations" ? <IconFlame size={18} /> : <IconMap size={18} />}
-        <span>{mapMode === "stations" ? "Variations" : "Stations"}</span>
+        <span>{mapMode === "stations" ? copy.variations : copy.stations}</span>
       </button>
       <button
-        aria-label={shareConfirmed ? "Lien copié" : "Partager cette vue"}
+        aria-label={shareConfirmed ? copy.linkCopied : copy.shareView}
         className="replay-tool-button replay-share-button"
         onClick={onShare}
-        title="Partager cette vue"
+        title={copy.shareView}
         type="button"
       >
         <IconShare3 size={18} />
-        <span>{shareConfirmed ? "Lien copié" : "Partager"}</span>
+        <span>{shareConfirmed ? copy.linkCopied : copy.share}</span>
       </button>
     </div>
   )
@@ -169,7 +174,7 @@ export const ReplayControls = ({
   return (
     <section
       aria-busy={mode === "replay" && (loading || playbackLoading)}
-      aria-label="Outils temporels de la carte"
+      aria-label={copy.tools}
       className="replay-controls"
       data-mode={mode}
     >
@@ -185,20 +190,20 @@ export const ReplayControls = ({
             <div className="archive-title">
               <IconHistory aria-hidden="true" size={22} />
               <span>
-                <strong>Historique du réseau</strong>
-                <small>7 jours · minutes détaillées, jours condensés</small>
+                <strong>{copy.title}</strong>
+                <small>{copy.subtitle}</small>
               </span>
             </div>
 
             {!compact && (
-              <div className="archive-mode-group" aria-label="Mode des archives" role="group">
+              <div className="archive-mode-group" aria-label={copy.modes} role="group">
                 <button
                   aria-pressed={timelineMode === "explore"}
                   data-active={timelineMode === "explore" || undefined}
                   onClick={() => onTimelineModeChange("explore")}
                   type="button"
                 >
-                  <IconTimeline size={17} /> Parcourir
+                  <IconTimeline size={17} /> {copy.explore}
                 </button>
                 <button
                   aria-pressed={timelineMode === "compare"}
@@ -206,53 +211,53 @@ export const ReplayControls = ({
                   onClick={() => onTimelineModeChange("compare")}
                   type="button"
                 >
-                  <IconArrowsDiff size={17} /> Comparer
+                  <IconArrowsDiff size={17} /> {copy.compare}
                 </button>
               </div>
             )}
 
             <div className="archive-head-actions">
               <button onClick={() => onModeChange("live")} type="button">
-                <IconWifi size={17} /> Direct
+                <IconWifi size={17} /> {copy.live}
               </button>
               <button
-                aria-label={shareConfirmed ? "Lien copié" : "Partager cette vue"}
+                aria-label={shareConfirmed ? copy.linkCopied : copy.shareView}
                 onClick={onShare}
-                title="Partager cette vue"
+                title={copy.shareView}
                 type="button"
               >
                 <IconShare3 size={17} />
-                <span>{shareConfirmed ? "Copié" : "Partager"}</span>
+                <span>{shareConfirmed ? copy.copied : copy.share}</span>
               </button>
             </div>
           </header>
 
           <div
-            aria-label={compact ? "Contexte temporel de la station" : undefined}
+            aria-label={compact ? copy.stationTimeContext : undefined}
             className="archive-selection-summary"
             data-mode={timelineMode}
           >
             {timelineMode === "explore" ? (
               <time dateTime={new Date(draftAt).toISOString()}>
-                <span>Instant affiché</span>
-                <strong>{formatArchiveClock(draftAt)}</strong>
-                <small>{formatArchiveDate(draftAt)} · {formatArchiveDistance(draftAt, latestAt)}</small>
+                <span>{copy.selectedMoment}</span>
+                <strong>{formatArchiveClock(draftAt, locale)}</strong>
+                <small>{formatArchiveDate(draftAt, locale)} · {formatArchiveDistance(draftAt, latestAt, locale)}</small>
               </time>
             ) : (
               <>
                 <time data-endpoint="before" dateTime={new Date(draftComparison[0]).toISOString()}>
-                  <span>Avant</span>
-                  <strong>{formatArchiveClock(draftComparison[0])}</strong>
-                  <small>{formatArchiveDate(draftComparison[0])}</small>
+                  <span>{copy.before}</span>
+                  <strong>{formatArchiveClock(draftComparison[0], locale)}</strong>
+                  <small>{formatArchiveDate(draftComparison[0], locale)}</small>
                 </time>
                 <div className="archive-comparison-duration">
-                  <span>Intervalle</span>
-                  <strong>{formatArchiveDuration(draftComparison[0], draftComparison[1])}</strong>
+                  <span>{copy.interval}</span>
+                  <strong>{formatArchiveDuration(draftComparison[0], draftComparison[1], locale)}</strong>
                 </div>
                 <time data-endpoint="after" dateTime={new Date(draftComparison[1]).toISOString()}>
-                  <span>Après</span>
-                  <strong>{formatArchiveClock(draftComparison[1])}</strong>
-                  <small>{formatArchiveDate(draftComparison[1])}</small>
+                  <span>{copy.after}</span>
+                  <strong>{formatArchiveClock(draftComparison[1], locale)}</strong>
+                  <small>{formatArchiveDate(draftComparison[1], locale)}</small>
                 </time>
               </>
             )}
@@ -271,7 +276,7 @@ export const ReplayControls = ({
                     onChange={setDraftPosition}
                     onChangeEnd={(position) => onSelectedAtChange(archiveTimestampAtScale(position, latestAt))}
                     step={1}
-                    thumbLabel="Instant affiché sur la carte"
+                    thumbLabel={copy.selectedThumb}
                     thumbValueText={formatScaleValue}
                     value={draftPosition}
                   />
@@ -289,8 +294,8 @@ export const ReplayControls = ({
                       archiveTimestampAtScale(positions[1], latestAt),
                     ])}
                     step={1}
-                    thumbFromLabel="Instant avant"
-                    thumbToLabel="Instant après"
+                    thumbFromLabel={copy.beforeThumb}
+                    thumbToLabel={copy.afterThumb}
                     thumbValueText={formatScaleValue}
                     value={draftComparisonPositions}
                   />
@@ -317,8 +322,8 @@ export const ReplayControls = ({
               <>
                 <button
                   aria-label={playbackLoading
-                    ? "Annuler la préparation de la relecture"
-                    : playing ? "Mettre la relecture en pause" : "Lire l’heure précédant cet instant"}
+                    ? copy.cancelPlayback
+                    : playing ? copy.pausePlayback : copy.playHour}
                   className="replay-play-button"
                   disabled={disabled || frameCount === 0}
                   onClick={() => onPlayingChange(!playing)}
@@ -327,9 +332,9 @@ export const ReplayControls = ({
                   {playing ? <IconPlayerPauseFilled size={17} /> : <IconPlayerPlayFilled size={17} />}
                 </button>
                 <span className="archive-playback-label">
-                  {playbackLoading ? "Préparation de la relecture…" : "Rejouer l’heure précédant cet instant"}
+                  {playbackLoading ? copy.preparing : copy.replayHour}
                 </span>
-                <div className="replay-speed-group" aria-label="Vitesse de lecture" role="group">
+                <div className="replay-speed-group" aria-label={copy.speed} role="group">
                   {speeds.map((value) => (
                     <button
                       aria-pressed={speed === value}
@@ -345,14 +350,14 @@ export const ReplayControls = ({
               </>
             ) : (
               <>
-                <span className="archive-delta-key"><i data-tone="gain" /> Gain de vélos</span>
-                <span className="archive-delta-key"><i data-tone="loss" /> Perte de vélos</span>
-                <small>La carte montre automatiquement la variation entre Avant et Après.</small>
+                <span className="archive-delta-key"><i data-tone="gain" /> {copy.bikeGain}</span>
+                <span className="archive-delta-key"><i data-tone="loss" /> {copy.bikeLoss}</span>
+                <small>{copy.comparisonHint}</small>
               </>
             )}
           </footer>
 
-          {loading && <span className="archive-loading" role="status">Actualisation…</span>}
+          {loading && <span className="archive-loading" role="status">{copy.refreshing}</span>}
         </div>
       )}
     </section>

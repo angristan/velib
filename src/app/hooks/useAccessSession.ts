@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 
-import { fetchSessionStatus, verifyTurnstile } from "../api"
+import { ApiRequestError, fetchSessionStatus, verifyTurnstile } from "../api"
+import { useI18n } from "../i18n"
 
 interface AccessSession {
   readonly checked: boolean
@@ -12,27 +13,30 @@ interface AccessSession {
   readonly verify: (token: string) => Promise<boolean>
 }
 
-const messageFrom = (error: unknown): string =>
-  error instanceof Error ? error.message : "La vérification est indisponible"
+type AccessErrorCode = "rate_limited" | "unavailable"
+
+const errorCodeFrom = (error: unknown): AccessErrorCode =>
+  error instanceof ApiRequestError && error.status === 429 ? "rate_limited" : "unavailable"
 
 export const useAccessSession = (): AccessSession => {
+  const { messages } = useI18n()
   const [checked, setChecked] = useState(false)
   const [verified, setVerified] = useState(false)
   const [siteKey, setSiteKey] = useState("")
-  const [error, setError] = useState<string | null>(null)
+  const [errorCode, setErrorCode] = useState<AccessErrorCode | null>(null)
   const [requestNumber, setRequestNumber] = useState(0)
   const verificationAbortRef = useRef<AbortController | null>(null)
 
   const retry = useCallback(() => {
     setChecked(false)
-    setError(null)
+    setErrorCode(null)
     setRequestNumber((current) => current + 1)
   }, [])
 
   const requireVerification = useCallback(() => {
     setChecked(true)
     setVerified(false)
-    setError(null)
+    setErrorCode(null)
   }, [])
 
   const verify = useCallback(async (token: string): Promise<boolean> => {
@@ -43,11 +47,11 @@ export const useAccessSession = (): AccessSession => {
       await verifyTurnstile(token, controller.signal)
       if (verificationAbortRef.current !== controller) return false
       setVerified(true)
-      setError(null)
+      setErrorCode(null)
       return true
     } catch (nextError) {
       if (controller.signal.aborted) return false
-      setError(messageFrom(nextError))
+      setErrorCode(errorCodeFrom(nextError))
       return false
     } finally {
       if (verificationAbortRef.current === controller) {
@@ -58,14 +62,14 @@ export const useAccessSession = (): AccessSession => {
 
   useEffect(() => {
     const controller = new AbortController()
-    setError(null)
+    setErrorCode(null)
     void fetchSessionStatus(controller.signal).then((status) => {
       setSiteKey(status.turnstileSiteKey)
       setVerified(status.verified)
       setChecked(true)
     }).catch((nextError: unknown) => {
       if (controller.signal.aborted) return
-      setError(messageFrom(nextError))
+      setErrorCode(errorCodeFrom(nextError))
       setChecked(true)
     })
     return () => controller.abort()
@@ -77,7 +81,11 @@ export const useAccessSession = (): AccessSession => {
     checked,
     verified,
     siteKey,
-    error,
+    error: errorCode === null
+      ? null
+      : errorCode === "rate_limited"
+        ? messages.errors.rateLimited
+        : messages.errors.verificationUnavailable,
     retry,
     requireVerification,
     verify,

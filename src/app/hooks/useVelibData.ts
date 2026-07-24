@@ -5,6 +5,7 @@ import {
   decodeLiveUpdate,
   fetchLiveData,
 } from "../api"
+import { useI18n, type Messages } from "../i18n"
 import { applyLiveUpdate } from "../live-update"
 import {
   archiveSnapshotQueryOptions,
@@ -35,8 +36,15 @@ const FALLBACK_POLL_MS = 60_000
 const LIVE_RECONCILE_MS = 5 * 60_000
 const RECONNECT_DELAYS_MS = [1_000, 2_000, 5_000, 10_000, 30_000, 60_000, 5 * 60_000]
 
-const messageFrom = (error: unknown): string =>
-  error instanceof Error ? error.message : "Une erreur inattendue est survenue"
+const messageFrom = (error: unknown, messages: Messages): string => {
+  if (error instanceof ApiRequestError) {
+    if (error.status === 401) return messages.errors.unauthorized
+    if (error.status === 429) return messages.errors.rateLimited
+    if (error.status >= 500) return messages.errors.unavailable
+  }
+  if (error instanceof TypeError) return messages.errors.unavailable
+  return messages.errors.unexpected
+}
 
 export const useLiveData = (
   enabled: boolean,
@@ -46,6 +54,7 @@ export const useLiveData = (
   readonly liveUpdate: LiveUpdate | null
   readonly refresh: () => void
 } => {
+  const { messages } = useI18n()
   const queryClient = useQueryClient()
   const [connection, setConnection] = useState<LiveConnectionStatus>("connecting")
   const [liveUpdate, setLiveUpdate] = useState<LiveUpdate | null>(null)
@@ -207,7 +216,7 @@ export const useLiveData = (
   return {
     data: query.data ?? null,
     loading: enabled && query.isPending,
-    error: query.error === null ? null : messageFrom(query.error),
+    error: query.error === null ? null : messageFrom(query.error, messages),
     connection,
     liveUpdate,
     refresh,
@@ -219,6 +228,7 @@ export const useArchiveSnapshot = (
   enabled: boolean,
   onUnauthorized: () => void,
 ): QueryState<ArchiveSnapshot | null> => {
+  const { messages } = useI18n()
   const options = useMemo(() => archiveSnapshotQueryOptions(anchorAt), [anchorAt])
   const query = useQuery({ ...options, enabled: enabled && anchorAt !== null })
 
@@ -231,7 +241,7 @@ export const useArchiveSnapshot = (
   return {
     data: query.data ?? null,
     loading: enabled && anchorAt !== null && query.isFetching,
-    error: query.error === null ? null : messageFrom(query.error),
+    error: query.error === null ? null : messageFrom(query.error, messages),
   }
 }
 
@@ -243,6 +253,7 @@ export const useReplayData = (
   enabled: boolean,
   onUnauthorized: () => void,
 ): QueryState<ReplayData | null> => {
+  const { messages } = useI18n()
   const queryClient = useQueryClient()
   const options = useMemo(
     () => replayQueryOptions(minutes, anchorAt),
@@ -277,7 +288,7 @@ export const useReplayData = (
   return {
     data: query.data ?? null,
     loading: enabled && query.isPending,
-    error: query.error === null ? null : messageFrom(query.error),
+    error: query.error === null ? null : messageFrom(query.error, messages),
   }
 }
 
@@ -287,6 +298,7 @@ export const useStationHistory = (
   enabled: boolean,
   onUnauthorized: () => void,
 ): QueryState<StationHistory | null> => {
+  const { messages } = useI18n()
   const options = useMemo(
     () => stationHistoryQueryOptions(stationCode, range),
     [range, stationCode],
@@ -305,6 +317,6 @@ export const useStationHistory = (
   return {
     data: query.data ?? null,
     loading: enabled && stationCode !== null && query.isPending,
-    error: query.error === null ? null : messageFrom(query.error),
+    error: query.error === null ? null : messageFrom(query.error, messages),
   }
 }

@@ -10,6 +10,7 @@ import type { FeatureCollection, Point } from "geojson"
 import { GeoJSONSource, Map, Marker, NavigationControl } from "maplibre-gl"
 import type { MapLayerMouseEvent, StyleSpecification } from "maplibre-gl"
 import { useEffect, useRef, useState } from "react"
+import { useI18n, type Messages } from "../i18n"
 import { updateWhenMapResourceAvailable } from "../map-readiness"
 import { availabilityBins, availabilityMarkerKey } from "../marker-style"
 import type {
@@ -196,12 +197,12 @@ const addAvailabilityMarkerImages = (
   }
 }
 
-const cartoAttribution =
-  '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a> · Données <a href="https://www.velib-metropole.fr/donnees-open-data-gbfs-du-service-velib-metropole">Vélib’ Métropole</a> (<a href="https://www.etalab.gouv.fr/licence-ouverte-open-licence/">Licence Ouverte</a>) · service non officiel'
+const cartoAttribution = (copy: Messages["map"]): string =>
+  `&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> ${copy.contributors} &copy; <a href="https://carto.com/attributions">CARTO</a> · ${copy.data} <a href="https://www.velib-metropole.fr/donnees-open-data-gbfs-du-service-velib-metropole">Vélib’ Métropole</a> (<a href="https://www.etalab.gouv.fr/licence-ouverte-open-licence/">${copy.openLicence}</a>) · ${copy.unofficial}`
 
 const mapBackgrounds: readonly MapBackground[] = ["light", "dark"]
 
-const mapStyle = (background: MapBackground): StyleSpecification => ({
+const mapStyle = (background: MapBackground, attribution: string): StyleSpecification => ({
   version: 8,
   glyphs: "https://fonts.openmaptiles.org/{fontstack}/{range}.pbf",
   sources: {
@@ -212,7 +213,7 @@ const mapStyle = (background: MapBackground): StyleSpecification => ({
         "https://b.basemaps.cartocdn.com/light_all/{z}/{x}/{y}@2x.png",
       ],
       tileSize: 256,
-      attribution: cartoAttribution,
+      attribution,
     },
     "carto-dark": {
       type: "raster",
@@ -221,7 +222,7 @@ const mapStyle = (background: MapBackground): StyleSpecification => ({
         "https://b.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}@2x.png",
       ],
       tileSize: 256,
-      attribution: cartoAttribution,
+      attribution,
     },
   },
   layers: mapBackgrounds.map((option) => ({
@@ -252,6 +253,8 @@ export const MapView = ({
   onSelect,
   onLocate,
 }: MapViewProps) => {
+  const { messages } = useI18n()
+  const copy = messages.map
   const containerRef = useRef<HTMLDivElement>(null)
   const mapRef = useRef<Map | null>(null)
   const userMarkerRef = useRef<Marker | null>(null)
@@ -272,12 +275,17 @@ export const MapView = ({
 
     const map = new Map({
       container: containerRef.current,
-      style: mapStyle(mapBackground),
+      style: mapStyle(mapBackground, cartoAttribution(copy)),
       center: [initialCamera.longitude, initialCamera.latitude],
       zoom: initialCamera.zoom,
       minZoom: 9,
       maxZoom: 19,
       attributionControl: {},
+      locale: {
+        "NavigationControl.ZoomIn": copy.zoomIn,
+        "NavigationControl.ZoomOut": copy.zoomOut,
+        "NavigationControl.ResetBearing": copy.resetBearing,
+      },
     })
     map.addControl(new NavigationControl({ showCompass: false }), "bottom-right")
     mapRef.current = map
@@ -641,7 +649,7 @@ export const MapView = ({
       map.remove()
       mapRef.current = null
     }
-  }, [])
+  }, [copy])
 
   useEffect(() => {
     const map = mapRef.current
@@ -861,7 +869,7 @@ export const MapView = ({
 
     const marker = document.createElement("div")
     marker.className = "user-location-marker"
-    marker.setAttribute("aria-label", "Votre position")
+    marker.setAttribute("aria-label", copy.yourPosition)
     userMarkerRef.current = new Marker({ element: marker })
       .setLngLat([userLocation.longitude, userLocation.latitude])
       .addTo(map)
@@ -873,11 +881,11 @@ export const MapView = ({
       duration: reduceMotion ? 0 : 500,
       essential: false,
     })
-  }, [userLocation])
+  }, [copy.yourPosition, userLocation])
 
   return (
     <section
-      aria-label="Carte des stations Vélib’. Utilisez la liste pour une navigation complète au clavier."
+      aria-label={copy.regionLabel}
       className="map-shell"
       data-mode={mode}
     >
@@ -901,45 +909,44 @@ export const MapView = ({
           <IconActivityHeartbeat size={19} />
           <span>
             <strong>{liveUpdate.changes.length}</strong>{" "}
-            station{liveUpdate.changes.length > 1 ? "s" : ""}{" "}
-            {mode === "replay" ? "rejouée" : "actualisée"}{liveUpdate.changes.length > 1 ? "s" : ""}
+            {copy.updatedStations(liveUpdate.changes.length, mode === "replay")}
             <small>
               {visibleChangeCount > 0
-                ? `${visibleChangeCount} visible${visibleChangeCount > 1 ? "s" : ""} ici`
-                : "aucune dans cette vue"}
+                ? copy.visibleHere(visibleChangeCount)
+                : copy.noneInView}
             </small>
           </span>
         </div>
       )}
-      <div className="map-legend" aria-label="Légende de la carte">
+      <div className="map-legend" aria-label={copy.legend}>
         {mapMode === "heatmap" ? (
           <>
-            <span><i className="legend-gradient legend-gradient--gain" />Disponibilité en hausse</span>
-            <span><i className="legend-gradient legend-gradient--loss" />Disponibilité en baisse</span>
-            <span><i className="legend-dot legend-dot--neutral" />Sans variation</span>
-            <span className="legend-hint">Intensité selon les variations cumulées</span>
+            <span><i className="legend-gradient legend-gradient--gain" />{copy.availabilityUp}</span>
+            <span><i className="legend-gradient legend-gradient--loss" />{copy.availabilityDown}</span>
+            <span><i className="legend-dot legend-dot--neutral" />{copy.noVariation}</span>
+            <span className="legend-hint">{copy.cumulativeIntensity}</span>
           </>
         ) : showBikeBreakdown ? (
           <>
-            <span><IconBike size={15} className="legend-icon legend-icon--mechanical" />Mécaniques</span>
-            <span><IconBolt size={15} className="legend-icon legend-icon--electric" />Électriques</span>
-            <span><IconParking size={15} className="legend-icon legend-icon--docks" />Places</span>
-            <span><i className="legend-ring legend-ring--docks" />Peu de places</span>
-            <span className="legend-hint">Contour orange = faible · rouge = aucun</span>
+            <span><IconBike size={15} className="legend-icon legend-icon--mechanical" />{messages.common.mechanical}</span>
+            <span><IconBolt size={15} className="legend-icon legend-icon--electric" />{messages.common.electric}</span>
+            <span><IconParking size={15} className="legend-icon legend-icon--docks" />{messages.common.docks}</span>
+            <span><i className="legend-ring legend-ring--docks" />{copy.fewDocks}</span>
+            <span className="legend-hint">{copy.outlineHint}</span>
           </>
         ) : (
           <>
-            <span><i className="legend-dot legend-dot--available" />Mécaniques</span>
-            <span><i className="legend-dot legend-dot--electric" />Électriques</span>
-            <span><i className="legend-dot legend-dot--free-docks" />Places libres</span>
-            <span><i className="legend-dot legend-dot--empty" />Capacité indisponible</span>
-            <span className="legend-hint">Disque proportionnel · diamètre selon la capacité totale</span>
+            <span><i className="legend-dot legend-dot--available" />{messages.common.mechanical}</span>
+            <span><i className="legend-dot legend-dot--electric" />{messages.common.electric}</span>
+            <span><i className="legend-dot legend-dot--free-docks" />{messages.common.freeDocks}</span>
+            <span><i className="legend-dot legend-dot--empty" />{copy.unavailableCapacity}</span>
+            <span className="legend-hint">{copy.proportionalHint}</span>
           </>
         )}
       </div>
-      <Tooltip label="Trouver les stations autour de moi" position="left">
+      <Tooltip label={copy.locate} position="left">
         <ActionIcon
-          aria-label="Trouver les stations autour de moi"
+          aria-label={copy.locate}
           className="locate-button"
           loading={locating}
           onClick={onLocate}
@@ -951,7 +958,7 @@ export const MapView = ({
         </ActionIcon>
       </Tooltip>
       {userLocation && (
-        <Badge className="nearby-badge" color="blue" size="lg" variant="filled">Triées par proximité</Badge>
+        <Badge className="nearby-badge" color="blue" size="lg" variant="filled">{copy.sortedNearby}</Badge>
       )}
     </section>
   )

@@ -66,7 +66,7 @@ it("renders explicit station values for both comparison points", () => {
   )
 
   const comparison = screen.getByRole("region", {
-    name: "Comparaison de disponibilité entre A et B",
+    name: "Comparaison de disponibilité entre Avant et Après",
   })
   assert.include(comparison.textContent ?? "", "Mécaniques")
   assert.isNotNull(screen.getByRole("table"))

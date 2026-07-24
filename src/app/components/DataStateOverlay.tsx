@@ -1,5 +1,6 @@
 import { Button, Loader, Stack, Text } from "@mantine/core"
 import { IconDatabaseOff, IconRefresh } from "@tabler/icons-react"
+import { useI18n } from "../i18n"
 
 interface DataStateOverlayProps {
   readonly loading: boolean
@@ -15,14 +16,16 @@ export const DataStateOverlay = ({
   error,
   title,
   message,
-  actionLabel = "Réessayer",
+  actionLabel,
   onRefresh,
 }: DataStateOverlayProps) => {
+  const { messages } = useI18n()
+  const copy = messages.dataState
   if (loading) {
     return (
       <div className="data-state-overlay" role="status">
         <Loader color="blue" size="sm" />
-        <Text fw={700}>Chargement des disponibilités…</Text>
+        <Text fw={700}>{copy.loading}</Text>
       </div>
     )
   }
@@ -32,15 +35,13 @@ export const DataStateOverlay = ({
       <Stack align="center" gap={10} maw={390}>
         <span className="empty-state-icon"><IconDatabaseOff size={30} /></span>
         <Text component="h2" className="empty-state-title">
-          {title ?? (error ? "Le réseau ne répond pas" : "La collecte va bientôt commencer")}
+          {title ?? (error ? copy.networkUnavailable : copy.collectionStarting)}
         </Text>
         <Text c="dimmed" size="md" ta="center">
-          {message ?? (error
-            ? "Impossible de récupérer les données pour le moment. Aucun chiffre fictif n’est affiché."
-            : "Aucune observation n’est encore disponible. Les premières stations apparaîtront après le prochain passage du collecteur.")}
+          {message ?? (error ? copy.errorHint : copy.emptyHint)}
         </Text>
         <Button leftSection={<IconRefresh size={18} />} onClick={onRefresh} size="md" variant="filled">
-          {actionLabel}
+          {actionLabel ?? copy.retry}
         </Button>
       </Stack>
     </div>

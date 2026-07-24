@@ -5,6 +5,8 @@ import {
   IconMapPinFilled,
 } from "@tabler/icons-react"
 import { memo, useEffect, useState } from "react"
+import { useI18n, type Messages } from "../i18n"
+import type { AppLocale } from "../locale"
 import type {
   DataMode,
   LiveConnectionStatus,
@@ -38,11 +40,13 @@ const presentationFor = (
   connection: LiveConnectionStatus,
   mode: DataMode,
   comparing: boolean,
+  copy: Messages["map"],
+  locale: AppLocale,
 ): StatusPresentation => {
   if (sourceUpdatedAt === null) {
     return {
       icon: <IconCloudOff size={13} />,
-      label: "En attente",
+      label: copy.waiting,
       tone: "waiting",
     }
   }
@@ -50,7 +54,7 @@ const presentationFor = (
   if (mode === "replay") {
     return {
       icon: <IconHistory size={13} />,
-      label: `${comparing ? "Comparaison" : "Archives"} · ${formatArchiveTimestamp(sourceUpdatedAt)}`,
+      label: `${comparing ? copy.comparison : copy.archives} · ${formatArchiveTimestamp(sourceUpdatedAt, locale)}`,
       tone: "replay",
     }
   }
@@ -59,15 +63,15 @@ const presentationFor = (
   if (isCurrent && connection === "live") {
     return {
       icon: <span className="map-data-status__dot" />,
-      label: `À jour · ${formatFreshnessCompact(sourceUpdatedAt, now)}`,
+      label: `${copy.current} · ${formatFreshnessCompact(sourceUpdatedAt, now, locale)}`,
       tone: "live",
     }
   }
 
-  const connectionLabel = connection === "reconnecting" ? "Reconnexion" : "Connexion"
+  const connectionLabel = connection === "reconnecting" ? copy.reconnecting : copy.connecting
   return {
     icon: <IconCloudOff size={13} />,
-    label: `${isCurrent ? connectionLabel : "Archive"} · ${formatFreshnessCompact(sourceUpdatedAt, now)}`,
+    label: `${isCurrent ? connectionLabel : copy.archive} · ${formatFreshnessCompact(sourceUpdatedAt, now, locale)}`,
     tone: "stale",
   }
 }
@@ -82,17 +86,19 @@ export const MapDataStatus = memo(function MapDataStatus({
   sourceUpdatedAt,
   stationCount,
 }: MapDataStatusProps) {
+  const { locale, messages } = useI18n()
+  const copy = messages.map
   const [now, setNow] = useState(Date.now)
   useEffect(() => {
     const interval = window.setInterval(() => setNow(Date.now()), 1_000)
     return () => window.clearInterval(interval)
   }, [])
 
-  const status = presentationFor(sourceUpdatedAt, now, error, connection, mode, comparing)
-  const mapTitle = mapMode === "heatmap" ? "Variations de disponibilité" : "Stations Vélib’"
+  const status = presentationFor(sourceUpdatedAt, now, error, connection, mode, comparing, copy, locale)
+  const mapTitle = mapMode === "heatmap" ? copy.variationTitle : copy.stationsTitle
   const mapSummary = mapMode === "heatmap"
-    ? `${activityCount} stations avec variation`
-    : `${stationCount} affichées`
+    ? copy.changedStations(activityCount)
+    : copy.shownStations(stationCount)
 
   return (
     <>
@@ -113,7 +119,7 @@ export const MapDataStatus = memo(function MapDataStatus({
         </Group>
       </div>
       <div
-        aria-label={`État des données : ${status.label}`}
+        aria-label={copy.dataState(status.label)}
         className="map-data-status"
         data-tone={status.tone}
       >
