@@ -15,6 +15,8 @@
   --background: #f4f6f9;
   --surface: #ffffff;
   --surface-subtle: #f8f9fb;
+  --control-muted: #667186;
+  --control-hover: #f6f8fb;
 }
 
 [data-mantine-color-scheme="dark"] {
@@ -30,6 +32,8 @@
   --background: #0e1726;
   --surface: #172237;
   --surface-subtle: #202d42;
+  --control-muted: #aeb9cc;
+  --control-hover: #26354b;
 }
 
 * { box-sizing: border-box; }
@@ -167,8 +171,8 @@ ul { margin: 0; padding: 0; list-style: none; }
 .station-search input:focus { border-color: var(--blue); box-shadow: 0 0 0 3px rgba(36, 132, 253, .11); }
 .station-search svg { color: var(--muted); }
 .station-filters { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); margin-top: 12px; border-bottom: 1px solid var(--border); }
-.station-filters button { min-width: 0; height: 40px; padding: 0 5px; border: 0; border-bottom: 3px solid transparent; color: #667186; background: transparent; font-size: 13px; font-weight: 700; cursor: pointer; }
-.station-filters button:hover { color: var(--navy); background: #f6f8fb; }
+.station-filters button { min-width: 0; height: 40px; padding: 0 5px; border: 0; border-bottom: 3px solid transparent; color: var(--control-muted); background: transparent; font-size: 13px; font-weight: 700; cursor: pointer; }
+.station-filters button:hover { color: var(--navy); background: var(--control-hover); }
 .station-filters button:focus-visible { position: relative; z-index: 1; outline: 3px solid rgba(36,132,253,.25); outline-offset: -3px; }
 .station-filters button[data-active] { border-bottom-color: var(--blue-dark); color: var(--blue-dark); background: transparent; }
 .station-scroll { flex: 1; min-height: 0; }
@@ -477,9 +481,9 @@ ul { margin: 0; padding: 0; list-style: none; }
 .history-section { margin-top: 30px; }
 .history-title, .nearby-title { margin: 2px 0 0; color: var(--navy); font-family: "Red Hat Display Variable", sans-serif; font-size: 20px; font-weight: 730; line-height: 1.2; }
 .range-control { display: flex; flex: none; overflow: hidden; border: 1px solid var(--border-strong); border-radius: 8px; background: var(--surface); }
-.range-control button { min-width: 43px; height: 38px; padding: 0 8px; border: 0; border-right: 1px solid var(--border); color: #5b6678; background: transparent; font-size: 13px; font-weight: 700; cursor: pointer; }
+.range-control button { min-width: 43px; height: 38px; padding: 0 8px; border: 0; border-right: 1px solid var(--border); color: var(--control-muted); background: transparent; font-size: 13px; font-weight: 700; cursor: pointer; }
 .range-control button:last-child { border-right: 0; }
-.range-control button:hover { color: var(--navy); background: #f3f6fa; }
+.range-control button:hover { color: var(--navy); background: var(--control-hover); }
 .range-control button:focus-visible { position: relative; z-index: 1; outline: 3px solid rgba(36,132,253,.28); outline-offset: -3px; }
 .range-control button[data-active] { color: white; background: var(--blue-dark); }
 .chart-empty { min-height: 220px; margin-top: 15px; border: 1px dashed var(--border-strong); border-radius: 10px; color: var(--muted); background: var(--surface-subtle); }
