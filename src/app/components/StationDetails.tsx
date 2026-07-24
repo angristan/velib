@@ -14,6 +14,7 @@ import {
 import { useMediaQuery } from "@mantine/hooks"
 import { lazy, Suspense, useEffect, useRef } from "react"
 import {
+  IconArrowsDiff,
   IconBike,
   IconBolt,
   IconExternalLink,
@@ -26,17 +27,25 @@ import type {
   HistoryRange,
   LiveStationChange,
   Station,
+  StationComparison,
   StationHistory,
   StationTrend,
 } from "../types"
 import { stationBikes, stationIsOperative } from "../types"
-import { distanceInMeters, formatDistance, formatNumber } from "../utils"
+import {
+  distanceInMeters,
+  formatArchiveDuration,
+  formatArchiveTimestamp,
+  formatDistance,
+  formatNumber,
+} from "../utils"
 const HistoryChart = lazy(() =>
   import("./HistoryChart").then((module) => ({ default: module.HistoryChart })),
 )
 
 interface StationDetailsProps {
   readonly station: Station | null
+  readonly comparison: StationComparison | null
   readonly nearby: readonly Station[]
   readonly history: StationHistory | null
   readonly historyLoading: boolean
@@ -84,6 +93,7 @@ const sparklinePoints = (points: readonly number[]): string => {
 
 const DetailContent = ({
   station,
+  comparison,
   nearby,
   history,
   historyLoading,
@@ -106,6 +116,9 @@ const DetailContent = ({
   const docksPercent = (station.docks / capacityScale) * 100
   const unavailablePercent = (station.unavailable / capacityScale) * 100
   const operative = stationIsOperative(station)
+  const comparisonBikeDelta = comparison === null
+    ? 0
+    : bikes - stationBikes(comparison.from)
   const directions = `https://www.openstreetmap.org/directions?to=${station.latitude}%2C${station.longitude}`
 
   return (
@@ -118,6 +131,9 @@ const DetailContent = ({
           <Text className="detail-code">N° {station.code}</Text>
         </Group>
         <Text component="h2" id="station-detail-title" className="detail-title">{station.name}</Text>
+        {comparison && (
+          <span className="capacity-context">Instant B · {formatArchiveTimestamp(comparison.toAt)}</span>
+        )}
         <div className="capacity-summary">
           <div>
             <strong>{bikes}</strong>
@@ -135,7 +151,50 @@ const DetailContent = ({
           <Progress.Section color="gray.4" value={docksPercent} />
           <Progress.Section color="red.6" value={unavailablePercent} />
         </Progress.Root>
-        {variation && (
+        {comparison && (
+          <section className="station-comparison" aria-label="Comparaison de disponibilité entre A et B">
+            <header className="station-comparison__title">
+              <span><IconArrowsDiff size={17} /></span>
+              <div>
+                <b>Évolution A → B</b>
+                <small>{formatArchiveDuration(comparison.fromAt, comparison.toAt)}</small>
+              </div>
+              <em data-direction={comparisonBikeDelta > 0 ? "up" : comparisonBikeDelta < 0 ? "down" : "neutral"}>
+                {comparisonBikeDelta > 0 ? "+" : ""}{comparisonBikeDelta} vélo{Math.abs(comparisonBikeDelta) === 1 ? "" : "s"}
+              </em>
+            </header>
+            <div className="station-comparison__endpoints">
+              <span><b>A</b>{formatArchiveTimestamp(comparison.fromAt)}</span>
+              <span><b>B</b>{formatArchiveTimestamp(comparison.toAt)}</span>
+            </div>
+            <table>
+              <caption className="sr-only">Valeurs à l’instant A, à l’instant B et différence</caption>
+              <thead>
+                <tr><th>Mesure</th><th>A</th><th>B</th><th>Δ</th></tr>
+              </thead>
+              <tbody>
+                {[
+                  ["Mécaniques", comparison.from.mechanical, station.mechanical],
+                  ["Électriques", comparison.from.electric, station.electric],
+                  ["Places libres", comparison.from.docks, station.docks],
+                ].map(([label, from, to]) => {
+                  const delta = Number(to) - Number(from)
+                  return (
+                    <tr key={String(label)}>
+                      <th scope="row">{label}</th>
+                      <td>{from}</td>
+                      <td>{to}</td>
+                      <td data-direction={delta > 0 ? "up" : delta < 0 ? "down" : "neutral"}>
+                        {delta > 0 ? "+" : ""}{delta}
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </section>
+        )}
+        {!comparison && variation && (
           <div className="live-variation" aria-live="polite">
             <span className="live-variation__label">{variationLabel}</span>
             <div>

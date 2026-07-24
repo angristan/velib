@@ -10,6 +10,30 @@ const dateFormatter = new Intl.DateTimeFormat("fr-FR", {
   hour: "2-digit",
   minute: "2-digit",
 })
+const archiveFormatter = new Intl.DateTimeFormat("fr-FR", {
+  timeZone: "Europe/Paris",
+  weekday: "short",
+  day: "numeric",
+  month: "short",
+  hour: "2-digit",
+  minute: "2-digit",
+})
+const archiveDateFormatter = new Intl.DateTimeFormat("fr-FR", {
+  timeZone: "Europe/Paris",
+  weekday: "short",
+  day: "numeric",
+  month: "short",
+})
+const archiveClockFormatter = new Intl.DateTimeFormat("fr-FR", {
+  timeZone: "Europe/Paris",
+  hour: "2-digit",
+  minute: "2-digit",
+})
+const archiveDayTickFormatter = new Intl.DateTimeFormat("fr-FR", {
+  timeZone: "Europe/Paris",
+  weekday: "short",
+  day: "numeric",
+})
 
 export const formatNumber = (value: number): string => compactNumber.format(value)
 
@@ -18,6 +42,42 @@ export const formatTimestamp = (timestamp: number): string =>
 
 export const formatChartTime = (timestamp: number, includeDay: boolean): string =>
   includeDay ? dateFormatter.format(timestamp) : timeFormatter.format(timestamp)
+
+export const formatArchiveTimestamp = (timestamp: number): string =>
+  timestamp ? archiveFormatter.format(timestamp) : "—"
+
+export const formatArchiveDate = (timestamp: number): string =>
+  timestamp ? archiveDateFormatter.format(timestamp) : "—"
+
+export const formatArchiveClock = (timestamp: number): string =>
+  timestamp ? archiveClockFormatter.format(timestamp) : "—"
+
+export const formatArchiveTick = (timestamp: number, includeDay: boolean): string =>
+  timestamp
+    ? includeDay
+      ? archiveDayTickFormatter.format(timestamp)
+      : archiveClockFormatter.format(timestamp)
+    : "—"
+
+export const formatArchiveDistance = (timestamp: number, latestAt: number): string => {
+  const minutes = Math.max(0, Math.round((latestAt - timestamp) / 60_000))
+  if (minutes <= 1) return "Maintenant"
+  if (minutes < 60) return `Il y a ${minutes} min`
+  const hours = Math.round(minutes / 60)
+  if (hours < 48) return `Il y a ${hours} h`
+  return `Il y a ${Math.round(hours / 24)} j`
+}
+
+export const formatArchiveDuration = (fromAt: number, toAt: number): string => {
+  const minutes = Math.max(0, Math.round((toAt - fromAt) / 60_000))
+  if (minutes < 60) return `${minutes} min`
+  const hours = Math.floor(minutes / 60)
+  const remainder = minutes % 60
+  if (hours < 24) return remainder === 0 ? `${hours} h` : `${hours} h ${remainder}`
+  const days = Math.floor(hours / 24)
+  const remainingHours = hours % 24
+  return remainingHours === 0 ? `${days} j` : `${days} j ${remainingHours} h`
+}
 
 export const ageInMinutes = (timestamp: number, now = Date.now()): number =>
   timestamp ? Math.max(0, Math.floor((now - timestamp) / 60_000)) : 0

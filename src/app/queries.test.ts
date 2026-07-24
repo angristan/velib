@@ -4,6 +4,7 @@ import { vi } from "vitest"
 import { createAppQueryClient } from "./query-client"
 import {
   liveQueryOptions,
+  replayQueryOptions,
   stationHistoryQueryOptions,
   velibQueryKeys,
 } from "./queries"
@@ -22,6 +23,14 @@ it("does not replace a live cache with an older snapshot", async () => {
   } finally {
     client.clear()
   }
+})
+
+it("deduplicates replay anchors that resolve to the same second", () => {
+  const first = replayQueryOptions(15, 1_784_625_060_100)
+  const second = replayQueryOptions(15, 1_784_625_060_999)
+
+  assert.deepEqual(first.queryKey, second.queryKey)
+  assert.deepEqual(first.queryKey, velibQueryKeys.replay(15, 1_784_625_060_000))
 })
 
 it("caches station history by station and range", async () => {

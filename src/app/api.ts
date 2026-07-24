@@ -421,12 +421,16 @@ export const fetchLiveData = async (
   return decodeLiveData(body)
 }
 
+export const canonicalReplayAnchorAt = (anchorAt: number | null): number | null =>
+  anchorAt === null ? null : Math.floor(anchorAt / 1_000) * 1_000
+
 export const fetchReplayData = async (
   minutes: ReplayWindowMinutes,
   anchorAt: number | null,
   signal: AbortSignal,
 ): Promise<ReplayData | null> => {
-  const at = anchorAt === null ? "" : `&at=${Math.round(anchorAt / 1_000)}`
+  const canonicalAnchor = canonicalReplayAnchorAt(anchorAt)
+  const at = canonicalAnchor === null ? "" : `&at=${canonicalAnchor / 1_000}`
   const response = await fetch(`/api/replay?minutes=${minutes}${at}`, {
     cache: "no-store",
     headers: { Accept: "application/json" },

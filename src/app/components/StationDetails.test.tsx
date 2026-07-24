@@ -38,6 +38,43 @@ beforeEach(() => {
 
 afterEach(cleanup)
 
+it("renders explicit station values for both comparison points", () => {
+  render(
+    <MantineProvider>
+      <StationDetails
+        comparison={{
+          from: { ...station, docks: 10, electric: 2, mechanical: 8 },
+          fromAt: 1_784_621_460_000,
+          toAt: 1_784_625_060_000,
+        }}
+        history={null}
+        historyEnabled={false}
+        historyError={null}
+        historyLoading={false}
+        nearby={[]}
+        onClose={vi.fn()}
+        onMobileCloseFocus={vi.fn()}
+        onRangeChange={vi.fn()}
+        onSelect={vi.fn()}
+        range="3h"
+        station={station}
+        trend={{ deltas: [], points: [] }}
+        variation={null}
+        variationLabel="Solde B − A"
+      />
+    </MantineProvider>,
+  )
+
+  const comparison = screen.getByRole("region", {
+    name: "Comparaison de disponibilité entre A et B",
+  })
+  assert.include(comparison.textContent ?? "", "Mécaniques")
+  assert.isNotNull(screen.getByRole("table"))
+  assert.isNotNull(screen.getByRole("cell", { name: "8" }))
+  assert.isNotNull(screen.getByRole("cell", { name: "9" }))
+  assert.isNotNull(screen.getByRole("cell", { name: "+1" }))
+})
+
 it("renders the Drawer immediately and returns mobile focus visibly", async () => {
   const user = userEvent.setup()
   const onClose = vi.fn()
@@ -49,6 +86,7 @@ it("renders the Drawer immediately and returns mobile focus visibly", async () =
         Carte
       </button>
       <StationDetails
+        comparison={null}
         history={null}
         historyEnabled={false}
         historyError={null}

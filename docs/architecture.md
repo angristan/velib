@@ -63,7 +63,7 @@ D1 is authoritative. The schema stores:
 
 Minute snapshots and rollups retain seven days of local history. Exact-key cleanup handles the normal retention path; bounded recovery passes remove older rows left by interrupted collections.
 
-The replay endpoint scans a bounded minute window and returns one compact baseline followed by sparse sequential changes. Station charts read five-minute rollups rather than a row-per-station-per-minute history table.
+The replay endpoint scans a bounded minute window and returns one compact baseline followed by sparse sequential changes. The archive timeline uses independent bounded queries for its A and B points instead of loading seven days of network frames. Station charts read five-minute rollups rather than a row-per-station-per-minute history table.
 
 ### LiveFeed Durable Object
 
@@ -80,7 +80,7 @@ The Worker handles these routes:
 | `POST /api/session` | Verify Turnstile and issue a signed session cookie |
 | `GET /api/live` | Current network baseline or reconciliation |
 | `GET /api/live/socket` | LiveFeed WebSocket upgrade |
-| `GET /api/replay?minutes=15\|30\|60` | Recent network replay |
+| `GET /api/replay?minutes=15\|30\|60&at=<unix-seconds>` | Bounded network replay ending at the latest or a retained archive point |
 | `GET /api/stations/:code` | Current station details |
 | `GET /api/stations/:code/history?range=1h\|3h\|1d\|7d` | Station history |
 

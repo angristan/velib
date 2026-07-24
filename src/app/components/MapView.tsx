@@ -38,6 +38,7 @@ interface MapViewProps {
   readonly dataError: string | null
   readonly sourceUpdatedAt: number | null
   readonly mode: DataMode
+  readonly comparing: boolean
   readonly mapMode: MapMode
   readonly mapBackground: MapBackground
   readonly initialCamera: MapCamera
@@ -243,6 +244,7 @@ export const MapView = ({
   dataError,
   sourceUpdatedAt,
   mode,
+  comparing,
   mapMode,
   mapBackground,
   initialCamera,
@@ -884,6 +886,7 @@ export const MapView = ({
         activityCount={activityChanges.length}
         connection={connection}
         error={dataError}
+        comparing={comparing}
         mapMode={mapMode}
         mode={mode}
         sourceUpdatedAt={sourceUpdatedAt}

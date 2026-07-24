@@ -1,6 +1,10 @@
 import { queryOptions, skipToken } from "@tanstack/react-query"
 
-import { fetchReplayData, fetchStationHistory } from "./api"
+import {
+  canonicalReplayAnchorAt,
+  fetchReplayData,
+  fetchStationHistory,
+} from "./api"
 import { mergeReplayRefresh } from "./replay"
 import type {
   HistoryRange,
@@ -19,7 +23,7 @@ export const velibQueryKeys = {
     [...velibQueryKeys.histories(), stationCode, range] as const,
   replays: () => [...velibQueryKeys.all, "replay"] as const,
   replay: (minutes: ReplayWindowMinutes, anchorAt: number | null) =>
-    [...velibQueryKeys.replays(), minutes, anchorAt] as const,
+    [...velibQueryKeys.replays(), minutes, canonicalReplayAnchorAt(anchorAt)] as const,
 }
 
 const isLiveData = (value: unknown): value is LiveData =>
@@ -63,14 +67,17 @@ export const liveQueryOptions = (
 export const replayQueryOptions = (
   minutes: ReplayWindowMinutes,
   anchorAt: number | null,
-) => queryOptions({
-  gcTime: 10 * MINUTE_MS,
-  queryFn: ({ signal }) => fetchReplayData(minutes, anchorAt, signal),
-  queryKey: velibQueryKeys.replay(minutes, anchorAt),
-  refetchOnWindowFocus: false,
-  staleTime: MINUTE_MS,
-  structuralSharing: shareReplayData,
-})
+) => {
+  const canonicalAnchor = canonicalReplayAnchorAt(anchorAt)
+  return queryOptions({
+    gcTime: 10 * MINUTE_MS,
+    queryFn: ({ signal }) => fetchReplayData(minutes, canonicalAnchor, signal),
+    queryKey: velibQueryKeys.replay(minutes, canonicalAnchor),
+    refetchOnWindowFocus: false,
+    staleTime: MINUTE_MS,
+    structuralSharing: shareReplayData,
+  })
+}
 
 export const stationHistoryQueryOptions = (
   stationCode: string | null,

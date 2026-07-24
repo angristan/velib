@@ -2,8 +2,9 @@ import type {
   DataMode,
   MapCamera,
   MapMode,
-  ReplayWindowMinutes,
   StationFilter,
+  TimelineMode,
+  TimelineRange,
 } from "./types"
 
 export const DEFAULT_CAMERA: MapCamera = {
@@ -17,7 +18,10 @@ export interface AppUrlState {
   readonly search: string
   readonly filter: StationFilter
   readonly mode: DataMode
-  readonly replayMinutes: ReplayWindowMinutes
+  readonly replayAt: number | null
+  readonly timelineMode: TimelineMode
+  readonly timelineRange: TimelineRange
+  readonly comparisonFromAt: number | null
   readonly mapMode: MapMode
   readonly camera: MapCamera
 }
@@ -38,10 +42,15 @@ const parseFilter = (value: string | null): StationFilter => {
   return "all"
 }
 
-const parseReplayMinutes = (value: string | null): ReplayWindowMinutes => {
-  if (value === "30") return 30
-  if (value === "60") return 60
-  return 15
+const parseTimestamp = (value: string | null): number | null => {
+  if (value === null || !/^\d{9,10}$/.test(value)) return null
+  const seconds = Number(value)
+  return Number.isSafeInteger(seconds) ? seconds * 1_000 : null
+}
+
+const parseTimelineRange = (value: string | null): TimelineRange => {
+  if (value === "6h" || value === "1d" || value === "7d") return value
+  return "1h"
 }
 
 const parseCamera = (params: URLSearchParams): MapCamera => {
@@ -71,12 +80,19 @@ export const parseAppUrlState = (search: string): AppUrlState => {
     ? selectedInput
     : null
 
+  const mode: DataMode = params.get("mode") === "replay" ? "replay" : "live"
+  const replayAt = mode === "replay" ? parseTimestamp(params.get("at")) : null
+  const comparisonFromAt = mode === "replay" ? parseTimestamp(params.get("from")) : null
+
   return {
     selectedCode,
     search: (params.get("q") ?? "").slice(0, 80),
     filter: parseFilter(params.get("filter")),
-    mode: params.get("mode") === "replay" ? "replay" : "live",
-    replayMinutes: parseReplayMinutes(params.get("window")),
+    mode,
+    replayAt,
+    timelineMode: comparisonFromAt === null ? "explore" : "compare",
+    timelineRange: parseTimelineRange(params.get("span")),
+    comparisonFromAt,
     mapMode: params.get("layer") === "heatmap" ? "heatmap" : "stations",
     camera: parseCamera(params),
   }
@@ -99,7 +115,11 @@ export const serializeAppUrlState = (
   if (state.filter !== "all") params.set("filter", state.filter)
   if (state.mode === "replay") {
     params.set("mode", "replay")
-    params.set("window", String(state.replayMinutes))
+    if (state.replayAt !== null) params.set("at", String(Math.round(state.replayAt / 1_000)))
+    if (state.timelineRange !== "1h") params.set("span", state.timelineRange)
+    if (state.timelineMode === "compare" && state.comparisonFromAt !== null) {
+      params.set("from", String(Math.round(state.comparisonFromAt / 1_000)))
+    }
   }
   if (state.mapMode === "heatmap") params.set("layer", "heatmap")
   params.set("lat", state.camera.latitude.toFixed(5))

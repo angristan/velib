@@ -20,6 +20,11 @@ import {
   useRef,
   useState,
 } from "react"
+import {
+  clampTimelineAt,
+  compareSnapshots,
+  defaultComparison,
+} from "./archive"
 import { DataStateOverlay } from "./components/DataStateOverlay"
 import { Header } from "./components/Header"
 import { ReplayControls } from "./components/ReplayControls"
@@ -46,9 +51,11 @@ import type {
   MapCamera,
   MapMode,
   PlaybackSpeed,
-  ReplayWindowMinutes,
   Station,
+  StationComparison,
   StationFilter,
+  TimelineMode,
+  TimelineRange,
   UserLocation,
 } from "./types"
 import { stationMatchesFilter, stationMatchesQuery } from "./types"
@@ -69,6 +76,8 @@ const StationDetails = lazy(() =>
 )
 
 type MobileView = "list" | "map"
+
+const ARCHIVE_REPLAY_MINUTES = 60 as const
 
 const viewOptions: ReadonlyArray<{ value: MobileView; label: React.ReactNode }> = [
   {
@@ -104,17 +113,19 @@ export default function App() {
   const [mode, setMode] = useState<DataMode>(initialUrlState.mode)
   const [mapMode, setMapMode] = useState<MapMode>(initialUrlState.mapMode)
   const [mapBackground, setMapBackground] = useState<MapBackground>(computedColorScheme)
-  const [replayMinutes, setReplayMinutes] = useState<ReplayWindowMinutes>(
-    initialUrlState.replayMinutes,
-  )
+  const [timelineMode, setTimelineMode] = useState<TimelineMode>(initialUrlState.timelineMode)
+  const [timelineRange, setTimelineRange] = useState<TimelineRange>(initialUrlState.timelineRange)
   const [replayCursor, setReplayCursor] = useState(0)
-  const [replayAnchorAt, setReplayAnchorAt] = useState<number | null>(null)
+  const [replayAnchorAt, setReplayAnchorAt] = useState<number | null>(initialUrlState.replayAt)
+  const [comparisonFromAt, setComparisonFromAt] = useState<number | null>(
+    initialUrlState.comparisonFromAt,
+  )
   const [playing, setPlaying] = useState(false)
   const [playbackSpeed, setPlaybackSpeed] = useState<PlaybackSpeed>(1)
   const [camera, setCamera] = useState<MapCamera>(initialUrlState.camera)
   const [shareConfirmed, setShareConfirmed] = useState(false)
   const mobileMapButtonRef = useRef<HTMLButtonElement>(null)
-  const restoredReplayAtRef = useRef<number | null>(null)
+  const restoredReplayAtRef = useRef<number | null>(initialUrlState.replayAt)
   const [userLocation, setUserLocation] = useState<UserLocation | null>(null)
   const [locating, setLocating] = useState(false)
   const [locationError, setLocationError] = useState<string | null>(null)
@@ -122,11 +133,19 @@ export default function App() {
     ? Math.floor((live.data?.sourceUpdatedAt ?? 0) / (15 * 60_000))
     : -1
   const replay = useReplayData(
-    replayMinutes,
+    ARCHIVE_REPLAY_MINUTES,
     replayRefreshKey,
     replayAnchorAt,
     mode === "live" ? live.liveUpdate : null,
     access.verified,
+    access.requireVerification,
+  )
+  const comparisonReplay = useReplayData(
+    15,
+    -1,
+    comparisonFromAt,
+    null,
+    access.verified && mode === "replay" && timelineMode === "compare" && comparisonFromAt !== null,
     access.requireVerification,
   )
 
@@ -143,15 +162,6 @@ export default function App() {
   }, [explorerOpen])
 
   useEffect(() => {
-    if (mode === "replay" && !replay.loading && replay.data === null) {
-      setMode("live")
-      setPlaying(false)
-      setReplayAnchorAt(null)
-      restoredReplayAtRef.current = null
-    }
-  }, [mode, replay.data, replay.loading])
-
-  useEffect(() => {
     if (replay.data === null) return
     const restoredAt = restoredReplayAtRef.current
     if (restoredAt !== null) {
@@ -159,8 +169,12 @@ export default function App() {
       restoredReplayAtRef.current = null
       return
     }
+    if (mode === "replay" && replayAnchorAt === null) {
+      setReplayCursor(replay.data.frames.length)
+      return
+    }
     setReplayCursor((current) => Math.min(current, replay.data?.frames.length ?? 0))
-  }, [replay.data])
+  }, [mode, replay.data, replayAnchorAt])
 
   useEffect(() => {
     const pauseWhenHidden = () => {
@@ -185,24 +199,36 @@ export default function App() {
   }, [playing, replay.data, replayCursor])
 
   const replaySnapshot = useMemo(() => {
-    if (
-      mode !== "replay" ||
-      live.data === null ||
-      replay.data === null ||
-      replay.data.minutes !== replayMinutes
-    ) return null
+    if (mode !== "replay" || live.data === null || replay.data === null) return null
     return replayDataAt(live.data.stations, replay.data, replayCursor)
-  }, [live.data, mode, replay.data, replayCursor, replayMinutes])
+  }, [live.data, mode, replay.data, replayCursor])
+  const comparisonSnapshot = useMemo(() => {
+    if (live.data === null || comparisonReplay.data === null) return null
+    return replayDataAt(
+      live.data.stations,
+      comparisonReplay.data,
+      comparisonReplay.data.frames.length,
+    )
+  }, [comparisonReplay.data, live.data])
+  const comparing = mode === "replay" && timelineMode === "compare"
   const presentedData = mode === "replay" ? replaySnapshot : live.data
-  const displayedUpdate = mode === "replay"
+  const comparisonChanges = useMemo(
+    () => comparing ? compareSnapshots(comparisonSnapshot, replaySnapshot) : [],
+    [comparing, comparisonSnapshot, replaySnapshot],
+  )
+  const displayedUpdate = comparing
+    ? null
+    : mode === "replay"
     ? replayUpdateAt(replay.data, replayCursor)
     : live.liveUpdate ?? latestReplayUpdate(replay.data)
   const activityChanges = useMemo(
-    () => aggregateReplayChanges(
-      replay.data,
-      mode === "replay" ? replayCursor : undefined,
-    ),
-    [mode, replay.data, replayCursor],
+    () => comparing
+      ? comparisonChanges
+      : aggregateReplayChanges(
+        replay.data,
+        mode === "replay" ? replayCursor : undefined,
+      ),
+    [comparing, comparisonChanges, mode, replay.data, replayCursor],
   )
   const stations = presentedData?.stations ?? []
   const visibleStations = useMemo(
@@ -212,16 +238,28 @@ export default function App() {
     [filter, search, stations],
   )
   const selected = stations.find((station) => station.code === selectedCode) ?? null
-  const selectedVariation = displayedUpdate?.changes.find(
-    (change) => change.code === selectedCode
-  ) ?? null
+  const selectedVariation = comparing
+    ? comparisonChanges.find((change) => change.code === selectedCode) ?? null
+    : displayedUpdate?.changes.find((change) => change.code === selectedCode) ?? null
+  const selectedComparison = useMemo<StationComparison | null>(() => {
+    if (!comparing || selected === null || comparisonSnapshot === null || replaySnapshot === null) return null
+    const from = comparisonSnapshot.stations.find((station) => station.code === selected.code)
+    if (from === undefined) return null
+    return {
+      from,
+      fromAt: comparisonSnapshot.sourceUpdatedAt,
+      toAt: replaySnapshot.sourceUpdatedAt,
+    }
+  }, [comparing, comparisonSnapshot, replaySnapshot?.sourceUpdatedAt, selected])
   const selectedTrend = useMemo(
-    () => stationTrend(
-      replay.data,
-      selectedCode ?? "",
-      mode === "replay" ? replayCursor : undefined,
-    ),
-    [mode, replay.data, replayCursor, selectedCode],
+    () => comparing
+      ? { deltas: [], points: [] }
+      : stationTrend(
+        replay.data,
+        selectedCode ?? "",
+        mode === "replay" ? replayCursor : undefined,
+      ),
+    [comparing, mode, replay.data, replayCursor, selectedCode],
   )
   const history = useStationHistory(
     mode === "live" ? selected?.code ?? null : null,
@@ -238,6 +276,13 @@ export default function App() {
       .slice(0, 3)
       .map(({ station }) => station)
   }, [selected, stations])
+  const selectedArchiveAt = mode === "replay"
+    ? replaySnapshot?.sourceUpdatedAt ?? replayAnchorAt ?? live.data?.sourceUpdatedAt ?? null
+    : live.data?.sourceUpdatedAt ?? null
+  const comparisonValue: readonly [number, number] | null =
+    timelineMode === "compare" && comparisonFromAt !== null && selectedArchiveAt !== null
+      ? [comparisonSnapshot?.sourceUpdatedAt ?? comparisonFromAt, selectedArchiveAt]
+      : null
 
   const selectStation = useCallback((station: Station) => {
     void preloadStationInteraction()
@@ -275,26 +320,60 @@ export default function App() {
     setFilter(value)
   }, [])
 
+  const selectArchiveAt = useCallback((timestamp: number) => {
+    setPlaying(false)
+    setReplayAnchorAt(timestamp)
+    restoredReplayAtRef.current = timestamp
+    setReplayCursor(0)
+  }, [])
+
   const changeMode = useCallback((nextMode: DataMode) => {
     setPlaying(false)
-    setReplayAnchorAt(null)
-    if (nextMode === "replay") setReplayCursor(0)
+    if (nextMode === "replay") {
+      const timestamp = live.data?.sourceUpdatedAt ?? null
+      setReplayAnchorAt(timestamp)
+      restoredReplayAtRef.current = timestamp
+      setReplayCursor(0)
+    } else {
+      setReplayAnchorAt(null)
+      restoredReplayAtRef.current = null
+    }
     setMode(nextMode)
-  }, [])
+  }, [live.data?.sourceUpdatedAt])
 
-  const changeReplayMinutes = useCallback((minutes: ReplayWindowMinutes) => {
+  const changeTimelineMode = useCallback((nextMode: TimelineMode) => {
     setPlaying(false)
-    const anchor = mode === "replay" ? replaySnapshot?.sourceUpdatedAt ?? null : null
-    setReplayAnchorAt(anchor)
-    restoredReplayAtRef.current = anchor
-    setReplayCursor(0)
-    setReplayMinutes(minutes)
-  }, [mode, replaySnapshot?.sourceUpdatedAt])
+    setTimelineMode(nextMode)
+    if (nextMode !== "compare") return
 
-  const changeReplayCursor = useCallback((cursor: number) => {
+    const latestAt = live.data?.sourceUpdatedAt
+    const selectedAt = selectedArchiveAt ?? latestAt
+    if (latestAt === undefined || selectedAt === undefined || selectedAt === null) return
+    const [fromAt] = defaultComparison(selectedAt, latestAt, timelineRange)
+    setComparisonFromAt(fromAt)
+    setMapMode("heatmap")
+  }, [live.data?.sourceUpdatedAt, selectedArchiveAt, timelineRange])
+
+  const changeTimelineRange = useCallback((nextRange: TimelineRange) => {
     setPlaying(false)
-    setReplayCursor(cursor)
-  }, [])
+    setTimelineRange(nextRange)
+    const latestAt = live.data?.sourceUpdatedAt
+    if (latestAt === undefined) return
+
+    const nextSelectedAt = clampTimelineAt(selectedArchiveAt ?? latestAt, latestAt, nextRange)
+    if (nextSelectedAt !== selectedArchiveAt) selectArchiveAt(nextSelectedAt)
+    if (timelineMode !== "compare" || comparisonFromAt === null) return
+
+    const nextFromAt = clampTimelineAt(comparisonFromAt, latestAt, nextRange)
+    if (nextFromAt < nextSelectedAt) setComparisonFromAt(nextFromAt)
+    else setComparisonFromAt(defaultComparison(nextSelectedAt, latestAt, nextRange)[0])
+  }, [comparisonFromAt, live.data?.sourceUpdatedAt, selectArchiveAt, selectedArchiveAt, timelineMode])
+
+  const changeComparison = useCallback((value: readonly [number, number]) => {
+    const [fromAt, toAt] = value
+    setComparisonFromAt(fromAt)
+    selectArchiveAt(toAt)
+  }, [selectArchiveAt])
 
   const changePlaying = useCallback((nextPlaying: boolean) => {
     if (nextPlaying && replay.data !== null && replayCursor >= replay.data.frames.length) {
@@ -315,17 +394,26 @@ export default function App() {
     search,
     filter,
     mode,
-    replayMinutes,
+    replayAt: mode === "replay" ? selectedArchiveAt : null,
+    timelineMode,
+    timelineRange,
+    comparisonFromAt: timelineMode === "compare"
+      ? comparisonSnapshot?.sourceUpdatedAt ?? comparisonFromAt
+      : null,
     mapMode,
     camera,
   }, window.location.href), [
     camera,
+    comparisonFromAt,
+    comparisonSnapshot?.sourceUpdatedAt,
     filter,
     mapMode,
     mode,
-    replayMinutes,
     search,
+    selectedArchiveAt,
     selectedCode,
+    timelineMode,
+    timelineRange,
   ])
 
   const changeColorScheme = useCallback((nextColorScheme: MapBackground) => {
@@ -350,12 +438,12 @@ export default function App() {
       <Header
         colorScheme={mapBackground}
         data={presentedData}
-        loading={live.loading || (mode === "replay" && replay.loading)}
+        loading={live.loading || (mode === "replay" && (replay.loading || (comparing && comparisonReplay.loading)))}
         onColorSchemeChange={changeColorScheme}
         onRefresh={live.refresh}
       />
 
-      {((live.error && live.data) || replay.error || locationError) && (
+      {((live.error && live.data) || replay.error || (comparing && comparisonReplay.error) || locationError) && (
         <div className="notification-stack" aria-label="Notifications">
           {live.error && live.data && (
             <Alert
@@ -367,9 +455,9 @@ export default function App() {
               Les dernières données reçues restent visibles et sont clairement datées.
             </Alert>
           )}
-          {replay.error && (
-            <Alert color="orange" title="Relecture indisponible">
-              {replay.error}
+          {(replay.error || (comparing && comparisonReplay.error)) && (
+            <Alert color="orange" title={comparing ? "Comparaison indisponible" : "Relecture indisponible"}>
+              {replay.error ?? (comparing ? comparisonReplay.error : null)}
             </Alert>
           )}
           {locationError && (
@@ -415,6 +503,7 @@ export default function App() {
           <Suspense fallback={<div className="map-loading"><Text>Chargement de la carte…</Text></div>}>
             <MapView
               activityChanges={activityChanges}
+              comparing={comparing}
               connection={live.connection}
               dataError={live.error}
               initialCamera={camera}
@@ -435,34 +524,45 @@ export default function App() {
             />
           </Suspense>
           <ReplayControls
-            cursor={replayCursor}
+            compact={selected !== null}
+            comparison={comparisonValue}
             frameCount={replay.data?.frames.length ?? 0}
-            loading={replay.loading}
+            latestAt={live.data?.sourceUpdatedAt ?? null}
+            loading={replay.loading || (comparing && comparisonReplay.loading)}
             mapMode={mapMode}
-            minutes={replayMinutes}
             mode={mode}
-            onCursorChange={changeReplayCursor}
+            onComparisonChange={changeComparison}
             onMapModeChange={setMapMode}
-            onMinutesChange={changeReplayMinutes}
             onModeChange={changeMode}
             onPlayingChange={changePlaying}
+            onSelectedAtChange={selectArchiveAt}
             onShare={share}
             onSpeedChange={setPlaybackSpeed}
+            onTimelineModeChange={changeTimelineMode}
+            onTimelineRangeChange={changeTimelineRange}
             playing={playing}
+            selectedAt={selectedArchiveAt}
             shareConfirmed={shareConfirmed}
             speed={playbackSpeed}
-            timestamp={mode === "replay" ? presentedData?.sourceUpdatedAt ?? null : null}
+            timelineMode={timelineMode}
+            timelineRange={timelineRange}
           />
           {stations.length === 0 && (
             <DataStateOverlay
-              error={mode === "replay" ? replay.error : live.error}
-              loading={mode === "replay" ? replay.loading : live.loading}
-              onRefresh={live.refresh}
+              actionLabel={mode === "replay" ? "Revenir au direct" : "Réessayer"}
+              error={mode === "replay" ? replay.error ?? (comparing ? comparisonReplay.error : null) : live.error}
+              loading={mode === "replay" ? replay.loading || (comparing && comparisonReplay.loading) : live.loading}
+              message={mode === "replay"
+                ? "Le point demandé est hors des sept jours conservés ou correspond à une interruption de collecte."
+                : undefined}
+              onRefresh={mode === "replay" ? () => changeMode("live") : live.refresh}
+              title={mode === "replay" ? "Cette archive n’est plus disponible" : undefined}
             />
           )}
           {selected && (
             <Suspense fallback={null}>
               <StationDetails
+                comparison={selectedComparison}
                 history={mode === "live" ? history.data : null}
                 historyEnabled={mode === "live"}
                 historyError={mode === "live" ? history.error : null}
@@ -476,7 +576,7 @@ export default function App() {
                 station={selected}
                 trend={selectedTrend}
                 variation={selectedVariation}
-                variationLabel={mode === "replay" ? "Variation rejouée" : "Variation en direct"}
+                variationLabel={comparing ? "Solde B − A" : mode === "replay" ? "Variation rejouée" : "Variation en direct"}
               />
             </Suspense>
           )}

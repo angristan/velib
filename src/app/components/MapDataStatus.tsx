@@ -10,7 +10,7 @@ import type {
   LiveConnectionStatus,
   MapMode,
 } from "../types"
-import { formatFreshnessCompact, formatTimestamp } from "../utils"
+import { formatArchiveTimestamp, formatFreshnessCompact } from "../utils"
 
 type StatusTone = "live" | "stale" | "replay" | "waiting"
 
@@ -20,6 +20,7 @@ interface MapDataStatusProps {
   readonly error: string | null
   readonly mapMode: MapMode
   readonly mode: DataMode
+  readonly comparing: boolean
   readonly sourceUpdatedAt: number | null
   readonly stationCount: number
 }
@@ -36,6 +37,7 @@ const presentationFor = (
   error: string | null,
   connection: LiveConnectionStatus,
   mode: DataMode,
+  comparing: boolean,
 ): StatusPresentation => {
   if (sourceUpdatedAt === null) {
     return {
@@ -48,7 +50,7 @@ const presentationFor = (
   if (mode === "replay") {
     return {
       icon: <IconHistory size={13} />,
-      label: `Relecture · ${formatTimestamp(sourceUpdatedAt)}`,
+      label: `${comparing ? "Comparaison" : "Archives"} · ${formatArchiveTimestamp(sourceUpdatedAt)}`,
       tone: "replay",
     }
   }
@@ -76,6 +78,7 @@ export const MapDataStatus = memo(function MapDataStatus({
   error,
   mapMode,
   mode,
+  comparing,
   sourceUpdatedAt,
   stationCount,
 }: MapDataStatusProps) {
@@ -85,7 +88,7 @@ export const MapDataStatus = memo(function MapDataStatus({
     return () => window.clearInterval(interval)
   }, [])
 
-  const status = presentationFor(sourceUpdatedAt, now, error, connection, mode)
+  const status = presentationFor(sourceUpdatedAt, now, error, connection, mode, comparing)
   const mapTitle = mapMode === "heatmap" ? "Variations de disponibilité" : "Stations Vélib’"
   const mapSummary = mapMode === "heatmap"
     ? `${activityCount} stations avec variation`

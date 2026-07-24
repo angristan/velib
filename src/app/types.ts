@@ -2,6 +2,8 @@ export type HistoryRange = "1h" | "3h" | "1d" | "7d"
 export type ReplayWindowMinutes = 15 | 30 | 60
 export type PlaybackSpeed = 1 | 2 | 4
 export type DataMode = "live" | "replay"
+export type TimelineMode = "explore" | "compare"
+export type TimelineRange = "1h" | "6h" | "1d" | "7d"
 export type MapMode = "stations" | "heatmap"
 export type MapBackground = "light" | "dark"
 
@@ -76,6 +78,12 @@ export interface ReplayData {
 export interface StationTrend {
   readonly deltas: readonly number[]
   readonly points: readonly number[]
+}
+
+export interface StationComparison {
+  readonly from: Station
+  readonly fromAt: number
+  readonly toAt: number
 }
 
 export interface MapCamera {

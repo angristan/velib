@@ -221,11 +221,10 @@ const routeRequest = Effect.fn("routeRequest")(function*(request: Request) {
     const replay = yield* repository.replay(minutes, now, at)
     const response = jsonResponse(replay)
     response.headers.set("x-replay-cache", cache === null ? "bypass" : "miss")
-    if (cache !== null) {
-      const responseEndSourceUpdatedAt = replay.frames.at(-1)?.sourceUpdatedAt ??
-        replay.baseline.sourceUpdatedAt
-      const responseCacheKey = replayCacheKey(request.url, minutes, responseEndSourceUpdatedAt)
-      yield* Effect.promise(() => writeReplayCache(cache, responseCacheKey, response))
+    if (cache !== null && cacheKey !== null) {
+      // Anchored requests are keyed by the requested instant so gaps between
+      // source updates hit the same entry that was written on the first read.
+      yield* Effect.promise(() => writeReplayCache(cache, cacheKey, response))
     }
     return response
   }

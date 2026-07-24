@@ -4,6 +4,7 @@ import { vi } from "vitest"
 import {
   decodeLiveData,
   decodeLiveUpdate,
+  canonicalReplayAnchorAt,
   decodeReplayData,
   decodeStationHistory,
   fetchLiveData,
@@ -32,6 +33,11 @@ it("requests the uncached current live state by default", async () => {
     fetchMock.mockRestore()
     vi.useRealTimers()
   }
+})
+
+it("canonicalizes replay anchors to predecessor-safe whole seconds", () => {
+  assert.strictEqual(canonicalReplayAnchorAt(1_784_625_060_999), 1_784_625_060_000)
+  assert.isNull(canonicalReplayAnchorAt(null))
 })
 
 it("always requests replay through the Worker cache", async () => {

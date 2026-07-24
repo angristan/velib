@@ -4,10 +4,20 @@ import { IconDatabaseOff, IconRefresh } from "@tabler/icons-react"
 interface DataStateOverlayProps {
   readonly loading: boolean
   readonly error: string | null
+  readonly title?: string
+  readonly message?: string
+  readonly actionLabel?: string
   readonly onRefresh: () => void
 }
 
-export const DataStateOverlay = ({ loading, error, onRefresh }: DataStateOverlayProps) => {
+export const DataStateOverlay = ({
+  loading,
+  error,
+  title,
+  message,
+  actionLabel = "Réessayer",
+  onRefresh,
+}: DataStateOverlayProps) => {
   if (loading) {
     return (
       <div className="data-state-overlay" role="status">
@@ -22,15 +32,15 @@ export const DataStateOverlay = ({ loading, error, onRefresh }: DataStateOverlay
       <Stack align="center" gap={10} maw={390}>
         <span className="empty-state-icon"><IconDatabaseOff size={30} /></span>
         <Text component="h2" className="empty-state-title">
-          {error ? "Le réseau ne répond pas" : "La collecte va bientôt commencer"}
+          {title ?? (error ? "Le réseau ne répond pas" : "La collecte va bientôt commencer")}
         </Text>
         <Text c="dimmed" size="md" ta="center">
-          {error
+          {message ?? (error
             ? "Impossible de récupérer les données pour le moment. Aucun chiffre fictif n’est affiché."
-            : "Aucune observation n’est encore disponible. Les premières stations apparaîtront après le prochain passage du collecteur."}
+            : "Aucune observation n’est encore disponible. Les premières stations apparaîtront après le prochain passage du collecteur.")}
         </Text>
         <Button leftSection={<IconRefresh size={18} />} onClick={onRefresh} size="md" variant="filled">
-          Réessayer
+          {actionLabel}
         </Button>
       </Stack>
     </div>
