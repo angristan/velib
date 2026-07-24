@@ -4,6 +4,7 @@ import {
   appendReplayUpdate,
   appendReplayUpdates,
   latestReplayUpdate,
+  mergeReplayRefresh,
   nearestReplayCursor,
   replayDataAt,
   stationTrend,
@@ -109,6 +110,26 @@ it("reconciles every WebSocket update queued during a refresh", () => {
   assert.isNotNull(reconciled)
   assert.strictEqual(reconciled?.frames.at(-1)?.sourceUpdatedAt, 298_000)
   assert.isNull(appendReplayUpdates(replay, [second]))
+})
+
+it("keeps newer socket frames when a Query refresh completes", () => {
+  const first = {
+    observedAt: 240_000,
+    previousSourceUpdatedAt: 178_000,
+    sourceUpdatedAt: 238_000,
+    changes: [],
+  }
+  const second = {
+    observedAt: 300_000,
+    previousSourceUpdatedAt: 238_000,
+    sourceUpdatedAt: 298_000,
+    changes: [],
+  }
+  const liveReplay = appendReplayUpdates(replay, [first, second])
+  assert.isNotNull(liveReplay)
+
+  const merged = mergeReplayRefresh(liveReplay, replay)
+  assert.strictEqual(merged?.frames.at(-1)?.sourceUpdatedAt, 298_000)
 })
 
 it("advances the replay window with sequential WebSocket updates", () => {

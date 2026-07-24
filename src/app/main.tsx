@@ -6,9 +6,11 @@ import "maplibre-gl/dist/maplibre-gl.css"
 import "./styles.css"
 
 import { createTheme, MantineProvider } from "@mantine/core"
+import { QueryClientProvider } from "@tanstack/react-query"
 import { StrictMode } from "react"
 import { createRoot } from "react-dom/client"
 import App from "./App"
+import { createAppQueryClient } from "./query-client"
 
 const theme = createTheme({
   primaryColor: "blue",
@@ -21,13 +23,17 @@ const theme = createTheme({
   },
 })
 
+const queryClient = createAppQueryClient()
+
 const root = document.getElementById("root")
 if (!root) throw new Error("Point de montage React introuvable")
 
 createRoot(root).render(
   <StrictMode>
-    <MantineProvider defaultColorScheme="auto" theme={theme}>
-      <App />
-    </MantineProvider>
+    <QueryClientProvider client={queryClient}>
+      <MantineProvider defaultColorScheme="auto" theme={theme}>
+        <App />
+      </MantineProvider>
+    </QueryClientProvider>
   </StrictMode>,
 )

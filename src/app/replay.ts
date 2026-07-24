@@ -79,6 +79,24 @@ export const appendReplayUpdates = (
   return current
 }
 
+export const mergeReplayRefresh = (
+  previous: ReplayData | null | undefined,
+  refreshed: ReplayData | null,
+): ReplayData | null => {
+  if (previous === undefined || previous === null || refreshed === null) return refreshed
+  const previousLatest = previous.frames.at(-1)?.sourceUpdatedAt ??
+    previous.baseline.sourceUpdatedAt
+  const refreshedLatest = refreshed.frames.at(-1)?.sourceUpdatedAt ??
+    refreshed.baseline.sourceUpdatedAt
+  if (previousLatest <= refreshedLatest) return refreshed
+
+  const pendingUpdates = previous.frames.filter(
+    (frame) => frame.sourceUpdatedAt > refreshedLatest,
+  )
+  if (pendingUpdates.length === 0) return previous
+  return appendReplayUpdates(refreshed, pendingUpdates) ?? previous
+}
+
 export const replayDataAt = (
   metadata: readonly Station[],
   replay: ReplayData,

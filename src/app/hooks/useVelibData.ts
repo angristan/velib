@@ -1,13 +1,18 @@
-import { useCallback, useEffect, useRef, useState } from "react"
+import { useQuery, useQueryClient } from "@tanstack/react-query"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import {
   ApiRequestError,
   decodeLiveUpdate,
   fetchLiveData,
-  fetchReplayData,
-  fetchStationHistory,
 } from "../api"
 import { applyLiveUpdate } from "../live-update"
-import { appendReplayUpdate, appendReplayUpdates } from "../replay"
+import {
+  liveQueryOptions,
+  replayQueryOptions,
+  stationHistoryQueryOptions,
+  velibQueryKeys,
+} from "../queries"
+import { appendReplayUpdate } from "../replay"
 import type {
   HistoryRange,
   LiveConnectionStatus,
@@ -39,89 +44,68 @@ export const useLiveData = (
   readonly liveUpdate: LiveUpdate | null
   readonly refresh: () => void
 } => {
-  const [data, setData] = useState<LiveData | null>(null)
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
+  const queryClient = useQueryClient()
   const [connection, setConnection] = useState<LiveConnectionStatus>("connecting")
   const [liveUpdate, setLiveUpdate] = useState<LiveUpdate | null>(null)
-  const [requestNumber, setRequestNumber] = useState(0)
-  const dataRef = useRef<LiveData | null>(null)
   const socketOpenRef = useRef(false)
-  const reconcileKeyRef = useRef<number | null>(null)
+  const reconcileKeyRef = useRef<number | null | undefined>(undefined)
+  const lastLoadedAtRef = useRef(0)
+
+  const loadSnapshot = useCallback(async (signal: AbortSignal) => {
+    const reconcileKey = reconcileKeyRef.current
+    reconcileKeyRef.current = null
+    const current = queryClient.getQueryData<LiveData | null>(velibQueryKeys.live())
+    const nextData = reconcileKey === undefined
+      ? await fetchLiveData(signal)
+      : await fetchLiveData(signal, reconcileKey)
+    if (
+      current !== undefined &&
+      current !== null &&
+      nextData !== null &&
+      nextData.sourceUpdatedAt > current.sourceUpdatedAt
+    ) {
+      setLiveUpdate(null)
+    }
+    lastLoadedAtRef.current = Date.now()
+    return nextData
+  }, [queryClient])
+  const options = useMemo(() => liveQueryOptions(loadSnapshot), [loadSnapshot])
+  const query = useQuery({ ...options, enabled })
+
+  const refetch = useCallback(() => {
+    void queryClient.refetchQueries({
+      exact: true,
+      queryKey: options.queryKey,
+      type: "active",
+    })
+  }, [options.queryKey, queryClient])
 
   const refresh = useCallback(() => {
     reconcileKeyRef.current = Math.floor(Date.now() / 60_000) * 60_000
-    setRequestNumber((current) => current + 1)
-  }, [])
+    refetch()
+  }, [refetch])
 
   useEffect(() => {
-    if (!enabled) {
-      setLoading(false)
-      return
+    if (query.error instanceof ApiRequestError && query.error.status === 401) {
+      onUnauthorized()
     }
-    const controller = new AbortController()
-    let inFlight = false
-    let lastLoadedAt = 0
-    setLoading(true)
+  }, [onUnauthorized, query.error])
 
-    const load = async () => {
-      if (inFlight) return
-      inFlight = true
-      try {
-        const reconcileKey = reconcileKeyRef.current
-        reconcileKeyRef.current = null
-        // The first snapshot must bypass browser and Worker caches. Later
-        // reconciliation polls may use the short-lived shared cache.
-        const nextData = lastLoadedAt === 0 && reconcileKey === null
-          ? await fetchLiveData(controller.signal)
-          : await fetchLiveData(controller.signal, reconcileKey)
-        const current = dataRef.current
-        if (
-          nextData !== null &&
-          (current === null || nextData.sourceUpdatedAt >= current.sourceUpdatedAt)
-        ) {
-          if (current !== null && nextData.sourceUpdatedAt > current.sourceUpdatedAt) {
-            setLiveUpdate(null)
-          }
-          dataRef.current = nextData
-          setData(nextData)
-        } else if (nextData === null && current === null) {
-          setData(null)
-        }
-        lastLoadedAt = Date.now()
-        setError(null)
-      } catch (nextError) {
-        if (!controller.signal.aborted) {
-          if (nextError instanceof ApiRequestError && nextError.status === 401) {
-            onUnauthorized()
-          } else {
-            setError(messageFrom(nextError))
-          }
-        }
-      } finally {
-        inFlight = false
-        if (!controller.signal.aborted) setLoading(false)
-      }
-    }
-
+  useEffect(() => {
+    if (!enabled) return
     const reconcileWhenNeeded = () => {
       if (document.visibilityState !== "visible") return
       const interval = socketOpenRef.current ? LIVE_RECONCILE_MS : FALLBACK_POLL_MS
-      if (Date.now() - lastLoadedAt >= interval) {
-        void load()
-      }
+      if (Date.now() - lastLoadedAtRef.current >= interval) refetch()
     }
 
-    void load()
     const interval = window.setInterval(reconcileWhenNeeded, FALLBACK_POLL_MS)
     document.addEventListener("visibilitychange", reconcileWhenNeeded)
-
     return () => {
-      controller.abort()
       window.clearInterval(interval)
       document.removeEventListener("visibilitychange", reconcileWhenNeeded)
     }
-  }, [enabled, onUnauthorized, requestNumber])
+  }, [enabled, refetch])
 
   useEffect(() => {
     if (!enabled) {
@@ -160,7 +144,7 @@ export const useLiveData = (
         setConnection("live")
         if (reconnected) {
           reconcileKeyRef.current = Math.floor(Date.now() / 60_000) * 60_000
-          setRequestNumber((value) => value + 1)
+          refetch()
         }
         stableTimer = window.setTimeout(() => {
           attempt = 0
@@ -178,10 +162,10 @@ export const useLiveData = (
 
         const update = decodeLiveUpdate(input)
         if (update === null) return
-        const current = dataRef.current
+        const current = queryClient.getQueryData<LiveData | null>(options.queryKey) ?? null
         if (current === null) {
           reconcileKeyRef.current = update.sourceUpdatedAt
-          setRequestNumber((value) => value + 1)
+          refetch()
           return
         }
         if (update.sourceUpdatedAt <= current.sourceUpdatedAt) return
@@ -190,14 +174,12 @@ export const useLiveData = (
         if (nextData === null) {
           setLiveUpdate(null)
           reconcileKeyRef.current = update.sourceUpdatedAt
-          setRequestNumber((value) => value + 1)
+          refetch()
           return
         }
 
-        dataRef.current = nextData
-        setData(nextData)
+        queryClient.setQueryData(options.queryKey, nextData)
         setLiveUpdate(update)
-        setError(null)
       }
 
       nextSocket.onerror = () => {
@@ -218,9 +200,16 @@ export const useLiveData = (
       if (stableTimer !== undefined) window.clearTimeout(stableTimer)
       socket?.close()
     }
-  }, [enabled])
+  }, [enabled, options.queryKey, queryClient, refetch])
 
-  return { data, loading, error, connection, liveUpdate, refresh }
+  return {
+    data: query.data ?? null,
+    loading: enabled && query.isPending,
+    error: query.error === null ? null : messageFrom(query.error),
+    connection,
+    liveUpdate,
+    refresh,
+  }
 }
 
 export const useReplayData = (
@@ -231,71 +220,42 @@ export const useReplayData = (
   enabled: boolean,
   onUnauthorized: () => void,
 ): QueryState<ReplayData | null> => {
-  const [data, setData] = useState<ReplayData | null>(null)
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
-  const [retryNumber, setRetryNumber] = useState(0)
-  const parametersRef = useRef({ minutes, anchorAt })
-  const pendingUpdatesRef = useRef<LiveUpdate[] | null>(null)
-  const liveUpdateRef = useRef(liveUpdate)
-  liveUpdateRef.current = liveUpdate
+  const queryClient = useQueryClient()
+  const options = useMemo(
+    () => replayQueryOptions(minutes, anchorAt),
+    [anchorAt, minutes],
+  )
+  const query = useQuery({ ...options, enabled })
+  const previousRefreshKeyRef = useRef(refreshKey)
 
   useEffect(() => {
-    if (!enabled) {
-      setLoading(false)
-      return
+    if (previousRefreshKeyRef.current === refreshKey) return
+    previousRefreshKeyRef.current = refreshKey
+    if (enabled) {
+      void queryClient.invalidateQueries({ exact: true, queryKey: options.queryKey })
     }
-    const controller = new AbortController()
-    const pendingUpdates = liveUpdateRef.current === null ? [] : [liveUpdateRef.current]
-    pendingUpdatesRef.current = pendingUpdates
-    const parametersChanged = parametersRef.current.minutes !== minutes ||
-      parametersRef.current.anchorAt !== anchorAt
-    parametersRef.current = { minutes, anchorAt }
-    if (parametersChanged) setData(null)
-    setLoading(true)
-    setError(null)
-
-    fetchReplayData(minutes, anchorAt, controller.signal)
-      .then((replay) => {
-        if (replay === null) {
-          setData(null)
-          return
-        }
-        const reconciled = appendReplayUpdates(replay, pendingUpdates)
-        if (reconciled === null) {
-          setRetryNumber((current) => current + 1)
-          return
-        }
-        setData(reconciled)
-      })
-      .catch((nextError: unknown) => {
-        if (controller.signal.aborted) return
-        if (nextError instanceof ApiRequestError && nextError.status === 401) {
-          onUnauthorized()
-        } else {
-          setError(messageFrom(nextError))
-        }
-      })
-      .finally(() => {
-        if (pendingUpdatesRef.current === pendingUpdates) pendingUpdatesRef.current = null
-        if (!controller.signal.aborted) setLoading(false)
-      })
-
-    return () => {
-      controller.abort()
-      if (pendingUpdatesRef.current === pendingUpdates) pendingUpdatesRef.current = null
-    }
-  }, [anchorAt, enabled, minutes, onUnauthorized, refreshKey, retryNumber])
+  }, [enabled, options.queryKey, queryClient, refreshKey])
 
   useEffect(() => {
-    if (liveUpdate === null) return
-    pendingUpdatesRef.current?.push(liveUpdate)
-    setData((current) => current === null
-      ? null
-      : appendReplayUpdate(current, liveUpdate))
-  }, [liveUpdate])
+    if (liveUpdate === null || anchorAt !== null) return
+    queryClient.setQueryData<ReplayData | null>(options.queryKey, (current) =>
+      current === undefined || current === null
+        ? current
+        : appendReplayUpdate(current, liveUpdate)
+    )
+  }, [anchorAt, liveUpdate, options.queryKey, queryClient])
 
-  return { data, loading, error }
+  useEffect(() => {
+    if (query.error instanceof ApiRequestError && query.error.status === 401) {
+      onUnauthorized()
+    }
+  }, [onUnauthorized, query.error])
+
+  return {
+    data: query.data ?? null,
+    loading: enabled && query.isPending,
+    error: query.error === null ? null : messageFrom(query.error),
+  }
 }
 
 export const useStationHistory = (
@@ -304,43 +264,24 @@ export const useStationHistory = (
   enabled: boolean,
   onUnauthorized: () => void,
 ): QueryState<StationHistory | null> => {
-  const [data, setData] = useState<StationHistory | null>(null)
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+  const options = useMemo(
+    () => stationHistoryQueryOptions(stationCode, range),
+    [range, stationCode],
+  )
+  const query = useQuery({
+    ...options,
+    enabled: enabled && stationCode !== null,
+  })
 
   useEffect(() => {
-    if (!enabled) {
-      setLoading(false)
-      return
+    if (query.error instanceof ApiRequestError && query.error.status === 401) {
+      onUnauthorized()
     }
-    if (!stationCode) {
-      setData(null)
-      setError(null)
-      return
-    }
+  }, [onUnauthorized, query.error])
 
-    const controller = new AbortController()
-    setLoading(true)
-    setError(null)
-
-    fetchStationHistory(stationCode, range, controller.signal)
-      .then((history) => {
-        setData(history)
-      })
-      .catch((nextError: unknown) => {
-        if (controller.signal.aborted) return
-        if (nextError instanceof ApiRequestError && nextError.status === 401) {
-          onUnauthorized()
-        } else {
-          setError(messageFrom(nextError))
-        }
-      })
-      .finally(() => {
-        if (!controller.signal.aborted) setLoading(false)
-      })
-
-    return () => controller.abort()
-  }, [enabled, onUnauthorized, range, stationCode])
-
-  return { data, loading, error }
+  return {
+    data: query.data ?? null,
+    loading: enabled && stationCode !== null && query.isPending,
+    error: query.error === null ? null : messageFrom(query.error),
+  }
 }

@@ -64,7 +64,7 @@ Browser ──▶ Turnstile session ──▶ Worker API ──▶ D1
 
 A scheduled Worker collects the official GBFS feeds every minute. D1 stores the latest network state, compressed minute snapshots, and five-minute rollups. The Worker API serves initial state, replay data, and station history. A hibernating Durable Object broadcasts compact changes to connected browsers while D1 remains authoritative.
 
-Effect provides boundary validation, typed failures, services, and request workflows. Workers Static Assets serves the React, Mantine, and MapLibre interface.
+Effect provides boundary validation, typed failures, services, and request workflows. Workers Static Assets serves the React, Mantine, TanStack Query, and MapLibre interface.
 
 For the storage model, data paths, caching, and access controls, see [Architecture](docs/architecture.md). For production configuration, deployment, rollback, and D1 recovery, see [Operations](docs/operations.md).
 
