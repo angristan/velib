@@ -57,6 +57,14 @@ const fetchJson = Effect.fn("GbfsClient.fetchJson")(function*(url: string, opera
   })
 })
 
+const decodeFeedValue = <S extends Schema.Top>(
+  schema: S,
+  input: unknown,
+  operation: string,
+) => Schema.decodeUnknownEffect(schema)(input).pipe(
+  Effect.mapError((cause) => FeedError.make({ operation, detail: cause.message, cause })),
+)
+
 const parseStationCode = (value: string): number | null => {
   const parsed = Number(value)
   return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null
@@ -97,14 +105,14 @@ const fetchStatus = Effect.fn("GbfsClient.fetchStatus")(function*() {
       (station.is_returning === true || station.is_returning === 1) &&
       (station.is_renting === true || station.is_renting === 1)
 
-    stations.push(CompactStation.make({
+    stations.push(yield* decodeFeedValue(CompactStation, {
       c: code,
       m: mechanical,
       e: electric,
       d: station.num_docks_available,
       o: operative ? 1 : 0,
       r: station.last_reported
-    }))
+    }, "decodeStatusStation"))
   }
 
   return {
@@ -129,7 +137,7 @@ const fetchInformation = Effect.fn("GbfsClient.fetchInformation")(function*() {
   for (const station of feed.data.stations) {
     const code = parseStationCode(station.stationCode)
     if (code === null) return yield* invalidStationCode(station.stationCode)
-    stations.push(StationMetadata.make({
+    stations.push(yield* decodeFeedValue(StationMetadata, {
       stationCode: code,
       stationId: String(station.station_id),
       name: station.name,
@@ -137,7 +145,7 @@ const fetchInformation = Effect.fn("GbfsClient.fetchInformation")(function*() {
       longitude: station.lon,
       capacity: station.capacity,
       metadataUpdatedAt: feed.lastUpdatedOther
-    }))
+    }, "decodeInformationStation"))
   }
 
   return {
