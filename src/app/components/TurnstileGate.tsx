@@ -1,4 +1,4 @@
-import { Button, Loader, Text, Title } from "@mantine/core"
+import { Button, Loader, Modal, Text, Title } from "@mantine/core"
 import { useEffect, useRef, useState } from "react"
 
 const TURNSTILE_SCRIPT =
@@ -163,16 +163,29 @@ export function TurnstileGate({
   }, [checked, error, forceVisible, renderAttempt, siteKey])
 
   return (
-    <div
-      aria-label="Vérification de sécurité"
-      aria-live="polite"
-      aria-modal="true"
-      className="verification-overlay"
-      role="dialog"
+    <Modal
+      aria-labelledby="security-verification-title"
+      centered
+      classNames={{ body: "verification-card__body", content: "verification-card" }}
+      closeOnClickOutside={false}
+      closeOnEscape={false}
+      onClose={() => undefined}
+      opened
+      overlayProps={{ backgroundOpacity: 0.62, blur: 8 }}
+      size={390}
+      withCloseButton={false}
+      zIndex={1_000}
     >
-      <div className="verification-card">
-        <div className="verification-brand" aria-hidden="true">V</div>
-        <Title order={2}>Accès à Vélib’ Pulse</Title>
+      <div className="verification-brand" aria-hidden="true">V</div>
+      <Title
+        data-autofocus
+        id="security-verification-title"
+        order={2}
+        tabIndex={-1}
+      >
+        Accès à Vélib’ Pulse
+      </Title>
+      <div aria-live="polite" className="verification-status">
         {!checked ? (
           <>
             <Loader size="sm" />
@@ -197,10 +210,10 @@ export function TurnstileGate({
             ) : null}
           </>
         )}
-        <Text className="verification-note" size="xs" c="dimmed">
-          Cette vérification protège le service public contre les requêtes automatisées abusives.
-        </Text>
       </div>
-    </div>
+      <Text className="verification-note" size="xs" c="dimmed">
+        Cette vérification protège le service public contre les requêtes automatisées abusives.
+      </Text>
+    </Modal>
   )
 }
