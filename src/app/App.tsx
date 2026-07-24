@@ -113,6 +113,7 @@ export default function App() {
   const [playbackSpeed, setPlaybackSpeed] = useState<PlaybackSpeed>(1)
   const [camera, setCamera] = useState<MapCamera>(initialUrlState.camera)
   const [shareConfirmed, setShareConfirmed] = useState(false)
+  const mobileMapButtonRef = useRef<HTMLButtonElement>(null)
   const restoredReplayAtRef = useRef<number | null>(null)
   const [userLocation, setUserLocation] = useState<UserLocation | null>(null)
   const [locating, setLocating] = useState(false)
@@ -468,6 +469,7 @@ export default function App() {
                 historyLoading={mode === "live" && history.loading}
                 nearby={nearby}
                 onClose={() => setSelectedCode(null)}
+                onMobileCloseFocus={() => mobileMapButtonRef.current?.focus()}
                 onRangeChange={setRange}
                 onSelect={selectStation}
                 range={range}
@@ -489,6 +491,7 @@ export default function App() {
               data-active={mobileView === option.value || undefined}
               key={option.value}
               onClick={() => setMobileView(option.value)}
+              ref={option.value === "map" ? mobileMapButtonRef : undefined}
               type="button"
             >
               {option.label}

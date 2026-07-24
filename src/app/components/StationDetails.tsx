@@ -48,6 +48,7 @@ interface StationDetailsProps {
   readonly range: HistoryRange
   readonly onRangeChange: (range: HistoryRange) => void
   readonly onClose: () => void
+  readonly onMobileCloseFocus: () => void
   readonly onSelect: (station: Station) => void
 }
 
@@ -94,7 +95,7 @@ const DetailContent = ({
   range,
   onRangeChange,
   onSelect,
-}: Omit<StationDetailsProps, "station" | "onClose"> & { readonly station: Station }) => {
+}: Omit<StationDetailsProps, "station" | "onClose" | "onMobileCloseFocus"> & { readonly station: Station }) => {
   const bikes = stationBikes(station)
   const capacityScale = Math.max(
     1,
@@ -257,10 +258,24 @@ const DetailContent = ({
   )
 }
 
+const mediaQueryOptions = { getInitialValueInEffect: false } as const
+
 export const StationDetails = (props: StationDetailsProps) => {
-  const useDrawer = useMediaQuery("(max-width: 1100px)")
+  const useDrawer = useMediaQuery("(max-width: 1100px)", undefined, mediaQueryOptions)
+  const useMobileReturnTarget = useMediaQuery(
+    "(max-width: 899px)",
+    undefined,
+    mediaQueryOptions,
+  )
   const panelRef = useRef<HTMLElement>(null)
-  const { station, onClose } = props
+  const { station, onClose, onMobileCloseFocus } = props
+
+  const closeDrawer = () => {
+    onClose()
+    if (useMobileReturnTarget) {
+      window.requestAnimationFrame(onMobileCloseFocus)
+    }
+  }
 
   useEffect(() => {
     if (useDrawer) return
@@ -281,9 +296,10 @@ export const StationDetails = (props: StationDetailsProps) => {
     return (
       <Drawer
         classNames={{ content: "station-drawer", body: "station-drawer__body", header: "station-drawer__header" }}
-        onClose={onClose}
+        onClose={closeDrawer}
         opened
         position="bottom"
+        returnFocus={!useMobileReturnTarget}
         size="88%"
         title={<Text fw={800} size="lg">Détail de la station</Text>}
       >
