@@ -30,8 +30,8 @@ const theme = createTheme({
   colors: { blue, green, red },
   primaryColor: "blue",
   primaryShade: { light: 6, dark: 5 },
-  defaultRadius: "sm",
-  radius: { xs: "4px", sm: "8px", md: "10px", lg: "14px", xl: "999px" },
+  defaultRadius: "xs",
+  radius: { xs: "3px", sm: "5px", md: "8px", lg: "10px", xl: "999px" },
   shadows: {
     xs: "0 1px 2px rgba(15, 31, 52, 0.08)",
     sm: "0 4px 12px rgba(15, 31, 52, 0.10)",

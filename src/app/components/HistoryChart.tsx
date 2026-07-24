@@ -110,7 +110,7 @@ export const HistoryChart = ({
             dataKey="label"
             fillOpacity={0.06}
             gridAxis="y"
-            h={250}
+            h={210}
             series={[
               { name: mechanicalLabel, color: "green.6" },
               { name: electricLabel, color: "blue.6" },

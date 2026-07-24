@@ -271,7 +271,7 @@ const DetailContent = ({
         rel="noreferrer"
         rightSection={<IconExternalLink size={15} />}
         target="_blank"
-        variant="filled"
+        variant="subtle"
       >
         {copy.directions}
       </Button>
@@ -328,12 +328,8 @@ const mediaQueryOptions = { getInitialValueInEffect: false } as const
 export const StationDetails = (props: StationDetailsProps) => {
   const { messages } = useI18n()
   const copy = messages.details
-  const useDrawer = useMediaQuery("(max-width: 1100px)", undefined, mediaQueryOptions)
-  const useMobileReturnTarget = useMediaQuery(
-    "(max-width: 899px)",
-    undefined,
-    mediaQueryOptions,
-  )
+  const useDrawer = useMediaQuery("(max-width: 899px)", undefined, mediaQueryOptions)
+  const useMobileReturnTarget = useDrawer
   const panelRef = useRef<HTMLElement>(null)
   const { station, onClose, onMobileCloseFocus } = props
 
