@@ -115,7 +115,12 @@ export const HistoryChart = ({
               legendItem: "availability-chart__legend-item",
               legendItemColor: "availability-chart__legend-color",
               tooltip: "availability-chart__tooltip",
+              tooltipBody: "availability-chart__tooltip-body",
               tooltipItem: "availability-chart__tooltip-item",
+              tooltipItemBody: "availability-chart__tooltip-item-body",
+              tooltipItemColor: "availability-chart__tooltip-item-color",
+              tooltipItemData: "availability-chart__tooltip-item-data",
+              tooltipItemName: "availability-chart__tooltip-item-name",
               tooltipLabel: "availability-chart__tooltip-label",
             }}
             curveType="linear"
