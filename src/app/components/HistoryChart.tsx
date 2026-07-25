@@ -108,20 +108,20 @@ export const HistoryChart = ({
             curveType="monotone"
             data={chartData}
             dataKey="label"
-            fillOpacity={0.06}
+            fillOpacity={0.12}
             gridAxis="y"
-            h={210}
+            h={250}
             series={[
               { name: mechanicalLabel, color: "green.6" },
               { name: electricLabel, color: "blue.6" },
               { name: docksLabel, color: "gray.6" },
               { name: unavailableLabel, color: "red.6" },
             ]}
-            strokeWidth={2}
+            strokeWidth={2.4}
             tickLine="none"
             valueFormatter={(value) => formatDecimal(value, locale)}
             withDots={points.length < 25}
-            withGradient={false}
+            withGradient
             withLegend
             yAxisProps={{ width: 34, allowDecimals: false }}
           />
