@@ -203,6 +203,7 @@ export const HistoryChart = ({
             tickLine="none"
             tooltipAnimationDuration={0}
             tooltipProps={{
+              cursor: { stroke: "var(--blue)", strokeDasharray: "4 3", strokeOpacity: 0.7, strokeWidth: 1.4 },
               isAnimationActive: false,
               position: tooltipPosition,
               wrapperStyle: { pointerEvents: "none" },
