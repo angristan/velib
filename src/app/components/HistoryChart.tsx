@@ -1,4 +1,4 @@
-import { AreaChart } from "@mantine/charts"
+import { LineChart } from "@mantine/charts"
 import {
   Alert,
   Center,
@@ -40,6 +40,7 @@ export const HistoryChart = ({
   const electricLabel = messages.common.electric
   const docksLabel = messages.common.docks
   const unavailableLabel = messages.common.unavailable
+  const seriesOrder = [mechanicalLabel, electricLabel, docksLabel, unavailableLabel]
   const chartData = points.map((point) => ({
     label: formatChartTime(point.at, range === "7d", locale),
     timestamp: point.at,
@@ -54,6 +55,9 @@ export const HistoryChart = ({
     : 0
   const removed = points.reduce((sum, point) => sum + point.removed, 0)
   const returned = points.reduce((sum, point) => sum + point.returned, 0)
+  const formatAvailability = (value: number) => Number.isInteger(value)
+    ? formatNumber(value, locale)
+    : formatDecimal(value, locale)
 
   return (
     <section className="history-section" aria-labelledby="history-heading">
@@ -102,28 +106,47 @@ export const HistoryChart = ({
             <span><small>{copy.high}</small><b>{formatNumber(Math.max(...bikes), locale)}</b></span>
             <span><small>{copy.movements}</small><b>−{formatNumber(removed, locale)} / +{formatNumber(returned, locale)}</b></span>
           </div>
-          <AreaChart
+          <LineChart
+            activeDotProps={{ r: 4, strokeWidth: 2 }}
             aria-label={copy.chartLabel}
             className="availability-chart"
-            curveType="monotone"
+            classNames={{
+              legend: "availability-chart__legend",
+              legendItem: "availability-chart__legend-item",
+              legendItemColor: "availability-chart__legend-color",
+              tooltip: "availability-chart__tooltip",
+              tooltipItem: "availability-chart__tooltip-item",
+              tooltipLabel: "availability-chart__tooltip-label",
+            }}
+            curveType="linear"
             data={chartData}
             dataKey="label"
-            fillOpacity={0.12}
-            gridAxis="y"
-            h={250}
+            dotProps={{ r: 2.5, strokeWidth: 0 }}
+            gridAxis="x"
+            h={260}
+            legendProps={{
+              height: locale === "fr" ? 42 : 28,
+              iconSize: 8,
+              itemSorter: (item) => seriesOrder.indexOf(String(item.value)),
+              verticalAlign: "top",
+            }}
+            lineChartProps={{ margin: { bottom: 0, left: -6, right: 6, top: 0 } }}
+            lineProps={{ isAnimationActive: false, strokeLinecap: "round", strokeLinejoin: "round" }}
             series={[
-              { name: mechanicalLabel, color: "green.6" },
-              { name: electricLabel, color: "blue.6" },
-              { name: docksLabel, color: "gray.6" },
-              { name: unavailableLabel, color: "red.6" },
+              { name: mechanicalLabel, color: "var(--mint)" },
+              { name: electricLabel, color: "var(--blue)" },
+              { name: docksLabel, color: "var(--chart-docks)", strokeDasharray: "6 4" },
+              { name: unavailableLabel, color: "var(--coral)", strokeDasharray: "2 4" },
             ]}
-            strokeWidth={2.4}
+            strokeDasharray="2 5"
+            strokeWidth={2.2}
             tickLine="none"
-            valueFormatter={(value) => formatDecimal(value, locale)}
-            withDots={points.length < 25}
-            withGradient
+            tooltipAnimationDuration={100}
+            valueFormatter={formatAvailability}
+            withDots={points.length <= 6}
             withLegend
-            yAxisProps={{ width: 34, allowDecimals: false }}
+            xAxisProps={{ minTickGap: 24, tickMargin: 8 }}
+            yAxisProps={{ allowDecimals: false, domain: [0, "auto"], tickCount: 5, width: 32 }}
           />
         </>
       )}

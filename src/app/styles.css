@@ -8,6 +8,7 @@
   --mint: #0a9a79;
   --mint-soft: #e8f7f2;
   --coral: #df5b52;
+  --chart-docks: #7d8998;
   --amber: #d9722c;
   --ink: #152033;
   --ink-2: #3f4b5f;
@@ -29,6 +30,7 @@
   --mint: #43c4a3;
   --mint-soft: #123b34;
   --coral: #ee746b;
+  --chart-docks: #aeb9c8;
   --amber: #f09a58;
   --ink: #edf3fc;
   --ink-2: #c6d0df;
@@ -728,7 +730,19 @@ a { color: inherit; }
 .chart-stats span:last-child { border-right: 0; }
 .chart-stats small { display: block; overflow: hidden; color: var(--muted); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
 .chart-stats b { display: block; margin-top: 2px; overflow: hidden; color: var(--ink); font-size: 12px; font-variant-numeric: tabular-nums; text-overflow: ellipsis; white-space: nowrap; }
-.availability-chart { margin-left: -7px; width: calc(100% + 7px); --chart-grid-color: var(--line); --chart-text-color: var(--muted); }
+.availability-chart {
+  width: 100%;
+  margin-top: 2px;
+  --chart-grid-color: color-mix(in srgb, var(--line) 78%, transparent);
+  --chart-text-color: var(--muted);
+}
+.availability-chart__legend { display: flex; min-height: 22px; align-items: center; justify-content: flex-start; gap: 4px 12px; padding: 0 2px; }
+.availability-chart__legend-item { gap: 5px; margin: 0; padding: 0 !important; color: var(--ink-2); font-size: 11px; font-weight: 650; line-height: 1; }
+.availability-chart__legend-color { --cs-size: 8px !important; }
+.availability-chart__tooltip { padding: 8px 10px; border: 1px solid var(--line); border-radius: 6px; color: var(--ink); background: var(--surface); box-shadow: var(--shadow-float); }
+.availability-chart__tooltip-label { margin-bottom: 5px; color: var(--ink); font-size: 11px; font-weight: 750; }
+.availability-chart__tooltip-item { min-height: 20px; color: var(--ink-2); font-size: 11px; }
+.availability-chart .mantine-LineChart-axis { font-size: 10px; }
 .chart-empty { min-height: 150px; margin-top: 10px; border: 1px dashed var(--line-strong); color: var(--muted); }
 .replay-detail-note { display: grid; gap: 2px; margin-top: 16px; padding: 8px; border-left: 2px solid var(--blue); color: var(--ink); background: var(--blue-soft); }
 .replay-detail-note b { font-size: 11px; }
