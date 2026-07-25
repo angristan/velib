@@ -8,6 +8,7 @@ import {
   Text,
 } from "@mantine/core"
 import { IconChartAreaLine, IconInfoCircle } from "@tabler/icons-react"
+import { useCallback, useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from "react"
 import { useI18n } from "../i18n"
 import type { HistoryRange, StationHistory } from "../types"
 import { formatChartTime, formatDecimal, formatNumber } from "../utils"
@@ -20,6 +21,22 @@ interface HistoryChartProps {
   readonly onRangeChange: (range: HistoryRange) => void
 }
 
+interface TooltipPosition {
+  readonly x: number
+  readonly y: number
+}
+
+const TOOLTIP_OFFSET = 10
+const TOOLTIP_FALLBACK_WIDTH = 136
+const TOOLTIP_FALLBACK_HEIGHT = 98
+
+const placeTooltipAxis = (cursor: number, tooltipSize: number, chartSize: number) => {
+  const afterCursor = cursor + TOOLTIP_OFFSET
+  return afterCursor + tooltipSize <= chartSize
+    ? afterCursor
+    : Math.max(0, cursor - tooltipSize - TOOLTIP_OFFSET)
+}
+
 export const HistoryChart = ({
   history,
   range,
@@ -28,6 +45,8 @@ export const HistoryChart = ({
   onRangeChange,
 }: HistoryChartProps) => {
   const { locale, messages } = useI18n()
+  const [tooltipPosition, setTooltipPosition] = useState<TooltipPosition>()
+  const tooltipFrame = useRef<number | null>(null)
   const copy = messages.history
   const ranges: ReadonlyArray<{ value: HistoryRange; label: string }> = [
     { value: "1h", label: copy.ranges.hour },
@@ -58,6 +77,40 @@ export const HistoryChart = ({
   const formatAvailability = (value: number) => Number.isInteger(value)
     ? formatNumber(value, locale)
     : formatDecimal(value, locale)
+
+  const cancelTooltipFrame = useCallback(() => {
+    if (tooltipFrame.current !== null) {
+      window.cancelAnimationFrame(tooltipFrame.current)
+      tooltipFrame.current = null
+    }
+  }, [])
+
+  const handleChartMouseMove = useCallback((event: ReactMouseEvent<HTMLDivElement>) => {
+    const chart = event.currentTarget
+    const chartBounds = chart.getBoundingClientRect()
+    const tooltip = chart.querySelector<HTMLElement>(".availability-chart__tooltip")
+    const cursorX = event.clientX - chartBounds.left
+    const cursorY = event.clientY - chartBounds.top
+    const nextPosition = {
+      x: placeTooltipAxis(cursorX, tooltip?.offsetWidth ?? TOOLTIP_FALLBACK_WIDTH, chartBounds.width),
+      y: placeTooltipAxis(cursorY, tooltip?.offsetHeight ?? TOOLTIP_FALLBACK_HEIGHT, chartBounds.height),
+    }
+
+    cancelTooltipFrame()
+    tooltipFrame.current = window.requestAnimationFrame(() => {
+      setTooltipPosition((current) => current?.x === nextPosition.x && current.y === nextPosition.y
+        ? current
+        : nextPosition)
+      tooltipFrame.current = null
+    })
+  }, [cancelTooltipFrame])
+
+  const handleChartMouseLeave = useCallback(() => {
+    cancelTooltipFrame()
+    setTooltipPosition(undefined)
+  }, [cancelTooltipFrame])
+
+  useEffect(() => cancelTooltipFrame, [cancelTooltipFrame])
 
   return (
     <section className="history-section" aria-labelledby="history-heading">
@@ -137,6 +190,8 @@ export const HistoryChart = ({
             }}
             lineChartProps={{ margin: { bottom: 0, left: -6, right: 6, top: 0 } }}
             lineProps={{ isAnimationActive: false, strokeLinecap: "round", strokeLinejoin: "round" }}
+            onMouseLeave={handleChartMouseLeave}
+            onMouseMove={handleChartMouseMove}
             series={[
               { name: mechanicalLabel, color: "var(--mint)" },
               { name: electricLabel, color: "var(--blue)" },
@@ -146,7 +201,12 @@ export const HistoryChart = ({
             strokeDasharray="2 5"
             strokeWidth={2.2}
             tickLine="none"
-            tooltipAnimationDuration={100}
+            tooltipAnimationDuration={0}
+            tooltipProps={{
+              isAnimationActive: false,
+              position: tooltipPosition,
+              wrapperStyle: { pointerEvents: "none" },
+            }}
             valueFormatter={formatAvailability}
             withDots={points.length <= 6}
             withLegend
