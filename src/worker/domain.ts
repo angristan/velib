@@ -25,12 +25,14 @@ const Longitude = Schema.Number.check(
   Schema.isBetween({ minimum: -180, maximum: 180 })
 )
 
-export class GbfsBikeType extends Schema.Class<GbfsBikeType>("GbfsBikeType")({
+// GBFS models are boundary-only wire shapes. Plain structs avoid constructing
+// thousands of short-lived class instances on every collection.
+export const GbfsBikeType = Schema.Struct({
   mechanical: Schema.optionalKey(NonNegativeCount),
   ebike: Schema.optionalKey(NonNegativeCount)
-}) {}
+})
 
-export class GbfsStatusStation extends Schema.Class<GbfsStatusStation>("GbfsStatusStation")({
+export const GbfsStatusStation = Schema.Struct({
   station_id: StationIdentifier,
   stationCode: Schema.String,
   num_bikes_available_types: Schema.Array(GbfsBikeType),
@@ -39,36 +41,36 @@ export class GbfsStatusStation extends Schema.Class<GbfsStatusStation>("GbfsStat
   is_returning: GbfsFlag,
   is_renting: GbfsFlag,
   last_reported: NonNegativeTimestamp
-}) {}
+})
 
-export class GbfsStatusData extends Schema.Class<GbfsStatusData>("GbfsStatusData")({
+export const GbfsStatusData = Schema.Struct({
   stations: Schema.Array(GbfsStatusStation)
-}) {}
+})
 
-export class GbfsStatusFeed extends Schema.Class<GbfsStatusFeed>("GbfsStatusFeed")({
+export const GbfsStatusFeed = Schema.Struct({
   lastUpdatedOther: PositiveTimestamp,
   ttl: NonNegativeCount,
   data: GbfsStatusData
-}) {}
+})
 
-export class GbfsInformationStation extends Schema.Class<GbfsInformationStation>("GbfsInformationStation")({
+export const GbfsInformationStation = Schema.Struct({
   station_id: StationIdentifier,
   stationCode: Schema.String,
   name: Schema.String,
   lat: Latitude,
   lon: Longitude,
   capacity: NonNegativeCount
-}) {}
+})
 
-export class GbfsInformationData extends Schema.Class<GbfsInformationData>("GbfsInformationData")({
+export const GbfsInformationData = Schema.Struct({
   stations: Schema.Array(GbfsInformationStation)
-}) {}
+})
 
-export class GbfsInformationFeed extends Schema.Class<GbfsInformationFeed>("GbfsInformationFeed")({
+export const GbfsInformationFeed = Schema.Struct({
   lastUpdatedOther: PositiveTimestamp,
   ttl: NonNegativeCount,
   data: GbfsInformationData
-}) {}
+})
 
 export class StationMetadata extends Schema.Class<StationMetadata>("StationMetadata")({
   stationCode: StationCode,
@@ -81,19 +83,21 @@ export class StationMetadata extends Schema.Class<StationMetadata>("StationMetad
 }) {}
 
 /** Short field names materially reduce every stored full-network snapshot. */
-export class CompactStation extends Schema.Class<CompactStation>("CompactStation")({
+export const CompactStation = Schema.Struct({
   c: StationCode,
   m: NonNegativeCount,
   e: NonNegativeCount,
   d: NonNegativeCount,
   o: Schema.Literals([0, 1]),
   r: NonNegativeTimestamp
-}) {}
+})
+export type CompactStation = typeof CompactStation.Type
 
-export class CompactSnapshot extends Schema.Class<CompactSnapshot>("CompactSnapshot")({
+export const CompactSnapshot = Schema.Struct({
   v: Schema.Literal(1),
   s: Schema.Array(CompactStation)
-}) {}
+})
+export type CompactSnapshot = typeof CompactSnapshot.Type
 
 const LiveStationCode = StationCode
 const LiveCount = NonNegativeCount

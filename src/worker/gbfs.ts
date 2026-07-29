@@ -88,7 +88,7 @@ const fetchStatus = Effect.fn("GbfsClient.fetchStatus")(function*() {
     )
   )
 
-  const stations: Array<CompactStation> = []
+  const stationInputs: Array<unknown> = []
   for (const station of feed.data.stations) {
     const code = parseStationCode(station.stationCode)
     if (code === null) return yield* invalidStationCode(station.stationCode)
@@ -105,15 +105,20 @@ const fetchStatus = Effect.fn("GbfsClient.fetchStatus")(function*() {
       (station.is_returning === true || station.is_returning === 1) &&
       (station.is_renting === true || station.is_renting === 1)
 
-    stations.push(yield* decodeFeedValue(CompactStation, {
+    stationInputs.push({
       c: code,
       m: mechanical,
       e: electric,
       d: station.num_docks_available,
       o: operative ? 1 : 0,
       r: station.last_reported
-    }, "decodeStatusStation"))
+    })
   }
+  const stations = yield* decodeFeedValue(
+    Schema.Array(CompactStation),
+    stationInputs,
+    "decodeStatusStation"
+  )
 
   return {
     sourceUpdatedAt: feed.lastUpdatedOther,
@@ -133,11 +138,11 @@ const fetchInformation = Effect.fn("GbfsClient.fetchInformation")(function*() {
     )
   )
 
-  const stations: Array<StationMetadata> = []
+  const stationInputs: Array<unknown> = []
   for (const station of feed.data.stations) {
     const code = parseStationCode(station.stationCode)
     if (code === null) return yield* invalidStationCode(station.stationCode)
-    stations.push(yield* decodeFeedValue(StationMetadata, {
+    stationInputs.push({
       stationCode: code,
       stationId: String(station.station_id),
       name: station.name,
@@ -145,8 +150,13 @@ const fetchInformation = Effect.fn("GbfsClient.fetchInformation")(function*() {
       longitude: station.lon,
       capacity: station.capacity,
       metadataUpdatedAt: feed.lastUpdatedOther
-    }, "decodeInformationStation"))
+    })
   }
+  const stations = yield* decodeFeedValue(
+    Schema.Array(StationMetadata),
+    stationInputs,
+    "decodeInformationStation"
+  )
 
   return {
     sourceUpdatedAt: feed.lastUpdatedOther,
