@@ -112,35 +112,8 @@ bunx wrangler d1 time-travel restore velib \
 
 After restoration, deploy a schema-compatible Worker if necessary and repeat the smoke tests. See Cloudflare’s current [D1 Time Travel documentation](https://developers.cloudflare.com/d1/reference/time-travel/) for retention and restore behavior.
 
-## Common local issues
-
-### The map has no data
-
-A fresh local D1 database is intentionally empty. Apply migrations, start the development server, and trigger the scheduled handler:
-
-```bash
-bun run db:migrate:local
-bun run dev
-curl "http://localhost:5173/cdn-cgi/handler/scheduled?cron=*+*+*+*+*"
-```
-
-Check the development-server logs for upstream decoding or D1 errors.
-
-### Generated bindings are stale
-
-Regenerate and review them after changing `wrangler.jsonc`:
-
-```bash
-bun run cf-typegen
-bun run cf-typegen:check
-```
-
-### Workerd tests fail after a migration
-
-The Workerd suite applies all migrations to isolated D1 storage. Ensure every migration works from an empty database and that `src/worker/test/apply-migrations.ts` still discovers them in order.
-
 ## Telemetry
 
 Workers Logs and Traces use full (`1.0`) head sampling. Before adding high-volume logging or custom spans, remove redundant per-query or per-item telemetry and check current Cloudflare usage and retention. Automatic Cloudflare spans already cover D1 and Durable Object binding calls.
 
-See [Architecture](architecture.md) for runtime and storage design.
+See [Development](development.md) for local setup and troubleshooting. See [Architecture](architecture.md) for runtime and storage design.

@@ -4,91 +4,49 @@ A map-first view of Vélib’ Métropole availability, live network changes, and
 
 [**Open Vélib’ Pulse →**](https://velib.stanislas.cloud)
 
-![Vélib’ Pulse — live Vélib’ Métropole availability](public/og-preview.png)
+<p align="center">
+  <img src="docs/assets/app-station-history.webp" alt="Vélib’ Pulse station details with 24-hour availability history" width="1000">
+  <br>
+  <sub>Live station availability over 24 hours</sub>
+</p>
+
+<p align="center">
+  <img src="docs/assets/app-comparison-heatmap.webp" alt="Vélib’ Pulse archive comparison heatmap" width="1000">
+  <br>
+  <sub>Network gains and losses in archive comparison mode</sub>
+</p>
 
 Vélib’ Pulse is an independent, unofficial service. It is not affiliated with Vélib’ Métropole or Smovengo.
 
-## Features
+## Highlights
 
-- Live availability for mechanical bikes, electric bikes, and open docks.
-- Map and station search with filters, nearby stations, and station history.
-- Live network updates over WebSockets without repeatedly downloading the full dataset.
-- One logarithmic archive scale spanning the full seven-day history, with recent minutes expanded for precision.
-- One-hour playback around any retained point, at multiple playback speeds.
-- Explicit before-and-after comparison with an automatic gain-and-loss heatmap and station-level deltas.
-- Shareable URLs that preserve the camera, filters, selection, archive time, and comparison.
-- French and English interface with a persisted language preference.
-- Light and dark map themes with responsive desktop and mobile layouts.
+- Live mechanical bikes, electric bikes, and open docks across the network.
+- Search, filters, nearby stations, and seven days of station history.
+- Live WebSocket updates backed by authoritative D1 snapshots.
+- Archive playback and before-and-after network comparison.
+- Shareable views that preserve the map, filters, station, and archive time.
+- French and English interfaces with responsive light and dark themes.
 
-## Quick start
-
-The project uses [Bun](https://bun.sh/) `1.3.9`. Cloudflare’s local runtime, D1 database, Durable Object, and test Turnstile credentials are configured by the repository.
+## Local development
 
 ```bash
 bun install
 cp .dev.vars.example .dev.vars
 bun run db:migrate:local
-bun run dev
+bun run dev --host 127.0.0.1
 ```
 
-Open <http://localhost:5173>. The interface remains empty until the first successful collection. Trigger one through Wrangler’s local scheduled endpoint:
+Open <http://127.0.0.1:5173>. See [Development](docs/development.md) to populate local data, run tests, and understand the project layout.
 
-```bash
-curl "http://localhost:5173/cdn-cgi/handler/scheduled?cron=*+*+*+*+*"
-```
+## Documentation
 
-The values in `.dev.vars.example` include Cloudflare’s official test-only Turnstile credentials. Never use them in production.
-
-## Development commands
-
-| Command | Purpose |
-| --- | --- |
-| `bun run dev` | Start the Vite and Workers development server |
-| `bun run check` | Run type checking, all tests, and the production build |
-| `bun run test:unit` | Run application and Worker unit tests |
-| `bun run test:workerd` | Run D1 and Durable Object integration tests in Workerd |
-| `bun run cf-typegen` | Regenerate `worker-configuration.d.ts` from Wrangler configuration |
-| `bun run cf-typegen:check` | Verify generated Worker bindings are current |
-| `bun run db:migrate:local` | Apply D1 migrations to the local database |
-
-CI additionally verifies a fresh local migration sequence and a Wrangler deployment dry run.
-
-## How it works
-
-```text
-Vélib’ GBFS ──▶ scheduled Worker ──▶ D1 snapshots and rollups
-                         │
-                         └──▶ LiveFeed Durable Object ──▶ WebSocket clients
-
-Browser ──▶ Turnstile session ──▶ Worker API ──▶ D1
-   └─────────────────────────────▶ LiveFeed WebSocket
-```
-
-A scheduled Worker collects the official GBFS feeds every minute. D1 stores the latest network state, compressed minute snapshots, and five-minute rollups. The Worker API serves initial state, compact archive snapshots, on-demand replay data, and station history. A hibernating Durable Object broadcasts compact changes to connected browsers while D1 remains authoritative.
-
-Effect provides boundary validation, typed failures, services, and request workflows. Workers Static Assets serves the React, Mantine, TanStack Query, and MapLibre interface.
-
-For the storage model, data paths, caching, and access controls, see [Architecture](docs/architecture.md). For production configuration, deployment, rollback, and D1 recovery, see [Operations](docs/operations.md).
-
-## Project layout
-
-| Path | Contents |
-| --- | --- |
-| `src/app/` | React interface, map behavior, replay, and API client |
-| `src/worker/` | Worker routes, collection, D1 repository, and Durable Object |
-| `migrations/` | D1 schema migrations |
-| `public/` | Static metadata and preview assets |
-| `wrangler.jsonc` | Worker bindings, domain, cron, observability, and deployment configuration |
-
-## Deployment
-
-Production uses a D1 database, a Durable Object, two Workers Rate Limiting bindings, Turnstile, Workers Static Assets, and the `velib.stanislas.cloud` custom domain. It also requires the `TURNSTILE_SECRET_KEY` and `SESSION_SIGNING_SECRET` Worker secrets.
-
-Do not deploy code that requires a schema migration before applying that migration. Follow the [deployment checklist](docs/operations.md#deploy) rather than invoking Wrangler directly.
+- [Development](docs/development.md) — local setup, commands, and troubleshooting
+- [Architecture](docs/architecture.md) — runtime components, storage, and data flows
+- [Operations](docs/operations.md) — deployment, rollback, and D1 recovery
 
 ## Data and attribution
 
-Availability and station metadata come from the [Vélib’ Métropole GBFS open-data feeds](https://www.velib-metropole.fr/donnees-open-data-gbfs-du-service-velib-metropole), published under the French [Licence Ouverte 2.0](https://www.etalab.gouv.fr/licence-ouverte-open-licence/). The interface shows the effective source-update time. Map data is attributed in the interface by the configured basemap provider.
+Availability and station metadata come from the [Vélib’ Métropole GBFS open-data feeds](https://www.velib-metropole.fr/donnees-open-data-gbfs-du-service-velib-metropole), published under the French [Licence Ouverte 2.0](https://www.etalab.gouv.fr/licence-ouverte-open-licence/). Map data is attributed in the interface by the configured basemap provider.
 
 ## License
 
