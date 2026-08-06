@@ -117,10 +117,20 @@ export const decodeLiveData = (value: unknown): LiveData | null => {
 
   if (stations.length === 0 && !observedAt) return null
 
+  const baselineSourceUpdatedAt = sourceUpdatedAt || observedAt
+  const latestUpdateInput = first(payload, ["latestUpdate", "latest_update"])
+  const decodedLatestUpdate = latestUpdateInput === undefined
+    ? null
+    : decodeLiveUpdate(latestUpdateInput)
+  const latestUpdate = decodedLatestUpdate?.sourceUpdatedAt === baselineSourceUpdatedAt
+    ? decodedLatestUpdate
+    : null
+
   return {
     observedAt,
-    sourceUpdatedAt: sourceUpdatedAt || observedAt,
+    sourceUpdatedAt: baselineSourceUpdatedAt,
     stations,
+    latestUpdate,
   }
 }
 

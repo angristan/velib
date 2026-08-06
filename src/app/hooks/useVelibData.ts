@@ -57,7 +57,6 @@ export const useLiveData = (
   const { messages } = useI18n()
   const queryClient = useQueryClient()
   const [connection, setConnection] = useState<LiveConnectionStatus>("connecting")
-  const [liveUpdate, setLiveUpdate] = useState<LiveUpdate | null>(null)
   const socketOpenRef = useRef(false)
   const reconcileKeyRef = useRef<number | null | undefined>(undefined)
   const lastLoadedAtRef = useRef(0)
@@ -65,21 +64,12 @@ export const useLiveData = (
   const loadSnapshot = useCallback(async (signal: AbortSignal) => {
     const reconcileKey = reconcileKeyRef.current
     reconcileKeyRef.current = null
-    const current = queryClient.getQueryData<LiveData | null>(velibQueryKeys.live())
     const nextData = reconcileKey === undefined
       ? await fetchLiveData(signal)
       : await fetchLiveData(signal, reconcileKey)
-    if (
-      current !== undefined &&
-      current !== null &&
-      nextData !== null &&
-      nextData.sourceUpdatedAt > current.sourceUpdatedAt
-    ) {
-      setLiveUpdate(null)
-    }
     lastLoadedAtRef.current = Date.now()
     return nextData
-  }, [queryClient])
+  }, [])
   const options = useMemo(() => liveQueryOptions(loadSnapshot), [loadSnapshot])
   const query = useQuery({ ...options, enabled })
 
@@ -183,14 +173,12 @@ export const useLiveData = (
 
         const nextData = applyLiveUpdate(current, update)
         if (nextData === null) {
-          setLiveUpdate(null)
           reconcileKeyRef.current = update.sourceUpdatedAt
           refetch()
           return
         }
 
         queryClient.setQueryData(options.queryKey, nextData)
-        setLiveUpdate(update)
       }
 
       nextSocket.onerror = () => {
@@ -218,7 +206,7 @@ export const useLiveData = (
     loading: enabled && query.isPending,
     error: query.error === null ? null : messageFrom(query.error, messages),
     connection,
-    liveUpdate,
+    liveUpdate: query.data?.latestUpdate ?? null,
     refresh,
   }
 }

@@ -33,6 +33,7 @@ export const applyLiveUpdate = (
   return {
     observedAt: update.observedAt,
     sourceUpdatedAt: update.sourceUpdatedAt,
-    stations
+    stations,
+    latestUpdate: update
   }
 }

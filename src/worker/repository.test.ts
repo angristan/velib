@@ -9,6 +9,7 @@ import {
   ROLLUP_SECONDS,
   type SnapshotRecord
 } from "./domain"
+import { deriveLiveUpdate } from "./live-update"
 import { makeVelibRepositoryLive, VelibRepository } from "./repository"
 
 interface FakeStatement extends D1PreparedStatement {
@@ -141,6 +142,55 @@ it.effect("validates the authoritative latest header before reusing the warm sna
     assert.deepEqual(persistedPayloads, [firstEncoded.text, secondEncoded.text])
     assert.strictEqual(persistedUpdates.length, 2)
     assert.strictEqual(JSON.parse(persistedUpdates[1] ?? "null").sourceUpdatedAt, 178)
+  }).pipe(Effect.provide(makeVelibRepositoryLive(db)))
+})
+
+it.effect("returns the latest persisted delta with the live bootstrap", () => {
+  const previous = snapshotRecord(60, 5)
+  const latest = snapshotRecord(120, 7)
+  const update = deriveLiveUpdate(previous, latest)
+  const db = makeFakeDatabase({
+    first: (sql) => {
+      if (sql.includes("FROM latest_status")) {
+        return {
+          observed_at: latest.observedAt,
+          source_updated_at: latest.sourceUpdatedAt,
+          payload: JSON.stringify(latest.snapshot),
+        }
+      }
+      if (sql.includes("FROM minute_updates")) {
+        return {
+          observed_at: update.observedAt,
+          previous_source_updated_at: update.previousSourceUpdatedAt,
+          source_updated_at: update.sourceUpdatedAt,
+          payload: JSON.stringify(update),
+        }
+      }
+      return null
+    },
+    all: (sql) => {
+      if (sql.includes("FROM stations")) {
+        return [{
+          station_code: 2009,
+          station_id: "2009",
+          name: "Place de la Bourse",
+          latitude: 48.869,
+          longitude: 2.341,
+          capacity: 20,
+          metadata_updated_at: latest.observedAt,
+        }]
+      }
+      throw new Error(`Unexpected query: ${sql}`)
+    },
+  })
+
+  return Effect.gen(function*() {
+    const repository = yield* VelibRepository
+    const live = yield* repository.live(latest.observedAt)
+
+    assert.strictEqual(live.sourceUpdatedAt, latest.sourceUpdatedAt)
+    assert.strictEqual(live.latestUpdate?.sourceUpdatedAt, latest.sourceUpdatedAt)
+    assert.strictEqual(live.latestUpdate?.changes[0]?.dm, 2)
   }).pipe(Effect.provide(makeVelibRepositoryLive(db)))
 })
 

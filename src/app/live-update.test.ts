@@ -47,6 +47,7 @@ it("applies absolute live station values", () => {
   assert.strictEqual(next?.stations[0]?.mechanical, 2)
   assert.strictEqual(next?.stations[0]?.electric, 3)
   assert.strictEqual(next?.stations[0]?.unavailable, 2)
+  assert.deepEqual(next?.latestUpdate, update)
 })
 
 it("rejects an update when an intermediate event was missed", () => {

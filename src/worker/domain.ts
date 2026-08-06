@@ -290,6 +290,7 @@ export interface LiveResponse {
   readonly observedAt: number
   readonly sourceUpdatedAt: number
   readonly freshnessSeconds: number
+  readonly latestUpdate: LiveUpdateEvent | null
   readonly summary: LiveSummary
   readonly stations: ReadonlyArray<LiveStation>
 }

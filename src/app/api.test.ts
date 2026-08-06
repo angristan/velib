@@ -112,11 +112,20 @@ it("decodes live Worker responses without inventing operational flags", () => {
       docks: 6,
       unavailable: 3,
       operative: false
-    }]
+    }],
+    latestUpdate: {
+      v: 1,
+      observedAt: 1_784_625_000,
+      previousSourceUpdatedAt: 1_784_624_920,
+      sourceUpdatedAt: 1_784_624_980,
+      changes: [{ c: 2009, m: 8, e: 3, d: 6, o: 0, dm: -1, de: 1, dd: 0 }],
+    },
   })
 
   assert.isNotNull(decoded)
   assert.strictEqual(decoded?.observedAt, 1_784_625_000_000)
+  assert.strictEqual(decoded?.latestUpdate?.sourceUpdatedAt, 1_784_624_980_000)
+  assert.strictEqual(decoded?.latestUpdate?.changes[0]?.mechanicalDelta, -1)
   assert.isFalse(decoded?.stations[0]?.isInstalled ?? true)
   assert.isFalse(decoded?.stations[0]?.isRenting ?? true)
   assert.isFalse(decoded?.stations[0]?.isReturning ?? true)

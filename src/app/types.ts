@@ -32,6 +32,8 @@ export interface LiveData {
   readonly observedAt: number
   readonly sourceUpdatedAt: number
   readonly stations: readonly Station[]
+  /** Present for authoritative live baselines; archive projections omit it. */
+  readonly latestUpdate?: LiveUpdate | null
 }
 
 export type LiveConnectionStatus = "connecting" | "live" | "reconnecting"

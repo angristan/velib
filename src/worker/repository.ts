@@ -292,6 +292,22 @@ const makeRepository = (db: D1Database): VelibRepository["Service"] => {
     return yield* decodeRows(LatestRow, row, "loadLatest")
   })
 
+  const loadLatestLiveUpdate = Effect.fn("VelibRepository.loadLatestLiveUpdate")(function*(
+    sourceUpdatedAt: number
+  ) {
+    const row = yield* firstRow(
+      db.prepare(
+        `SELECT observed_at, previous_source_updated_at, source_updated_at, payload
+         FROM minute_updates
+         WHERE source_updated_at = ?`
+      ).bind(sourceUpdatedAt),
+      "loadLatestLiveUpdate"
+    )
+    if (row === null) return null
+    const decoded = yield* decodeRows(ReplayUpdateRow, row, "loadLatestLiveUpdate")
+    return yield* decodeLiveUpdatePayload(decoded.payload)
+  })
+
   const loadLatestRecord = Effect.fn("VelibRepository.loadLatestRecord")(function*() {
     const header = yield* loadLatestHeader()
     if (header === null) {
@@ -829,6 +845,7 @@ const makeRepository = (db: D1Database): VelibRepository["Service"] => {
     const snapshot = yield* decodeSnapshotText(latest.payload).pipe(
       Effect.mapError((cause) => decodeError("decodeLatest", cause))
     )
+    const latestUpdate = yield* loadLatestLiveUpdate(latest.source_updated_at)
     const metadata = yield* loadMetadata()
     const states = new Map(snapshot.s.map((station) => [station.c, station]))
     const stations: Array<LiveStation> = []
@@ -880,6 +897,7 @@ const makeRepository = (db: D1Database): VelibRepository["Service"] => {
       observedAt: latest.observed_at,
       sourceUpdatedAt: latest.source_updated_at,
       freshnessSeconds: Math.max(0, now - latest.source_updated_at),
+      latestUpdate,
       summary: {
         stations: stations.length,
         operativeStations,
