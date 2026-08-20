@@ -1,15 +1,26 @@
 import { Effect } from "effect"
 
+import type { ArchiveBatch } from "./archive"
 import { encodeSnapshot } from "./codec"
 import {
   AppError,
   CollectionRecord,
   CompactSnapshot,
+  type PersistSnapshotResult,
   ROLLUP_SECONDS,
   SnapshotRecord
 } from "./domain"
 import { GbfsClient } from "./gbfs"
 import { VelibRepository } from "./repository"
+
+export interface CollectionOptions {
+  readonly createRollups?: boolean
+}
+
+export interface CollectionResult {
+  readonly archive: ArchiveBatch | null
+  readonly liveUpdate: PersistSnapshotResult["liveUpdate"]
+}
 
 const errorDetail = (error: AppError): string => {
   switch (error._tag) {
@@ -23,7 +34,10 @@ const errorDetail = (error: AppError): string => {
   }
 }
 
-export const collectMinute = Effect.fn("collectMinute")(function*(observedAt: number) {
+export const collectMinute = Effect.fn("collectMinute")(function*(
+  observedAt: number,
+  options: CollectionOptions = {}
+) {
   const client = yield* GbfsClient
   const repository = yield* VelibRepository
   const startedAt = Date.now()
@@ -63,8 +77,18 @@ export const collectMinute = Effect.fn("collectMinute")(function*(observedAt: nu
     const persisted = yield* repository.persistSnapshot(record, encoded)
     const collectionStatus = persisted.status
     const liveUpdate = persisted.liveUpdate
+    const capacities = collectionStatus === "ok"
+      ? yield* repository.capacities().pipe(
+          Effect.catch((error) =>
+            Effect.logWarning("Station observation archive skipped", {
+              operation: error.operation,
+              detail: error.detail
+            }).pipe(Effect.as(null))
+          )
+        )
+      : null
 
-    if (observedAt % ROLLUP_SECONDS === 0) {
+    if (options.createRollups !== false && observedAt % ROLLUP_SECONDS === 0) {
       // Finalize one bucket late so a delayed prior Cron can persist its last minute.
       const recentBuckets = Array.from(
         { length: 12 },
@@ -91,7 +115,17 @@ export const collectMinute = Effect.fn("collectMinute")(function*(observedAt: nu
       durationMs: run.durationMs,
       liveChanges: liveUpdate?.changes.length ?? 0
     })
-    return liveUpdate
+    return {
+      archive: collectionStatus === "ok" && capacities !== null
+        ? {
+            capacities,
+            observedAt,
+            sourceUpdatedAt: status.sourceUpdatedAt,
+            stations: snapshot.s
+          }
+        : null,
+      liveUpdate
+    } satisfies CollectionResult
   })
 
   return yield* collection.pipe(

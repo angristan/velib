@@ -7,27 +7,70 @@ import {
   VerificationRequired
 } from "./access"
 import { collectMinute } from "./application"
+import {
+  type ArchiveBatch,
+  deliverStationObservations,
+  type StationObservationPipeline
+} from "./archive"
 import { GbfsClientLive } from "./gbfs"
 import { LiveFeed } from "./live-feed"
 import { makeVelibRepositoryLive } from "./repository"
 import { handleRequest } from "./routes"
+import {
+  D1StationHistoryLive,
+  makeR2StationHistoryLive
+} from "./station-history"
 import { type SessionCryptoError } from "./signing"
 
 export { LiveFeed }
 
-const makeRuntime = (env: Env) =>
-  ManagedRuntime.make(
+interface AnalyticsBindings {
+  readonly HISTORY_BACKEND?: string
+  readonly OBSERVATIONS?: StationObservationPipeline
+  readonly R2_SQL_ACCOUNT_ID?: string
+  readonly R2_SQL_BUCKET?: string
+  readonly R2_SQL_TOKEN?: string
+}
+
+type RuntimeEnv = Omit<Env, keyof AnalyticsBindings> & AnalyticsBindings
+
+const r2HistoryReady = (env: RuntimeEnv): env is RuntimeEnv & {
+  readonly HISTORY_BACKEND: "r2"
+  readonly OBSERVATIONS: StationObservationPipeline
+  readonly R2_SQL_ACCOUNT_ID: string
+  readonly R2_SQL_BUCKET: string
+  readonly R2_SQL_TOKEN: string
+} =>
+  env.HISTORY_BACKEND === "r2" &&
+  env.OBSERVATIONS !== undefined &&
+  (env.R2_SQL_ACCOUNT_ID?.length ?? 0) > 0 &&
+  (env.R2_SQL_BUCKET?.length ?? 0) > 0 &&
+  (env.R2_SQL_TOKEN?.length ?? 0) > 0
+
+const makeRuntime = (env: RuntimeEnv) => {
+  const repositoryLayer = makeVelibRepositoryLive(env.DB)
+  const historyLayer = r2HistoryReady(env)
+    ? makeR2StationHistoryLive({
+        accountId: env.R2_SQL_ACCOUNT_ID,
+        bucket: env.R2_SQL_BUCKET,
+        token: env.R2_SQL_TOKEN
+      })
+    : D1StationHistoryLive
+
+  return ManagedRuntime.make(
     Layer.mergeAll(
       GbfsClientLive,
-      makeVelibRepositoryLive(env.DB),
+      repositoryLayer,
+      Layer.provide(historyLayer, repositoryLayer),
       makeAccessControlLive(env)
     )
   )
+}
 
 type AppRuntime = ReturnType<typeof makeRuntime>
-const runtimes = new WeakMap<Env, AppRuntime>()
+const runtimes = new WeakMap<RuntimeEnv, AppRuntime>()
 
-const runtimeFor = (env: Env): AppRuntime => {
+const runtimeFor = (env: RuntimeEnv): AppRuntime => {
   const cached = runtimes.get(env)
   if (cached !== undefined) {
     return cached
@@ -118,7 +161,28 @@ const internalError = (): Response =>
     }
   )
 
-const worker: ExportedHandler<Env> = {
+const deliverArchive = async (
+  pipeline: StationObservationPipeline,
+  archive: ArchiveBatch
+): Promise<void> => {
+  try {
+    const delivery = await deliverStationObservations(pipeline, archive)
+    console.info("Station observations archived", {
+      observedAt: archive.observedAt,
+      sourceUpdatedAt: archive.sourceUpdatedAt,
+      records: delivery.records,
+      attempts: delivery.attempts
+    })
+  } catch (cause) {
+    console.error("Station observation archive failed", {
+      observedAt: archive.observedAt,
+      sourceUpdatedAt: archive.sourceUpdatedAt,
+      cause
+    })
+  }
+}
+
+const worker: ExportedHandler<RuntimeEnv> = {
   async fetch(request, env, context) {
     const url = new URL(request.url)
     const authorization = await runtimeFor(env).runPromise(
@@ -156,7 +220,9 @@ const worker: ExportedHandler<Env> = {
 
   scheduled(controller, env, context) {
     const observedAt = Math.floor(controller.scheduledTime / 1000 / 60) * 60
-    const program = collectMinute(observedAt).pipe(
+    const program = collectMinute(observedAt, {
+      createRollups: !r2HistoryReady(env)
+    }).pipe(
       Effect.tapCause((cause) =>
         Effect.logError("Scheduled collection terminated", {
           observedAt,
@@ -164,24 +230,34 @@ const worker: ExportedHandler<Env> = {
         })
       )
     )
-    const ingestion = runtimeFor(env).runPromise(program).then(async (update) => {
-      if (update === null) return
-
-      try {
-        const delivered = await env.LIVE_FEED.getByName("network").broadcast(JSON.stringify(update))
-        if (delivered > 0) {
-          console.info("Live update broadcast", {
-            sourceUpdatedAt: update.sourceUpdatedAt,
-            changes: update.changes.length,
-            delivered
-          })
-        }
-      } catch (cause) {
-        console.error("Live update broadcast failed", {
-          sourceUpdatedAt: update.sourceUpdatedAt,
-          cause
-        })
+    const ingestion = runtimeFor(env).runPromise(program).then(async (result) => {
+      const deliveries: Array<Promise<void>> = []
+      if (result.archive !== null && env.OBSERVATIONS !== undefined) {
+        deliveries.push(deliverArchive(env.OBSERVATIONS, result.archive))
       }
+      const liveUpdate = result.liveUpdate
+      if (liveUpdate !== null) {
+        deliveries.push((async () => {
+          try {
+            const delivered = await env.LIVE_FEED.getByName("network").broadcast(
+              JSON.stringify(liveUpdate)
+            )
+            if (delivered > 0) {
+              console.info("Live update broadcast", {
+                sourceUpdatedAt: liveUpdate.sourceUpdatedAt,
+                changes: liveUpdate.changes.length,
+                delivered
+              })
+            }
+          } catch (cause) {
+            console.error("Live update broadcast failed", {
+              sourceUpdatedAt: liveUpdate.sourceUpdatedAt,
+              cause
+            })
+          }
+        })())
+      }
+      await Promise.all(deliveries)
     })
     context.waitUntil(ingestion)
   }

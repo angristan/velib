@@ -324,3 +324,29 @@ it.effect("runs cleanup without station lookup round trips", () => {
     ])
   }).pipe(Effect.provide(makeVelibRepositoryLive(db)))
 })
+
+it.effect("caches station capacities after the first D1 read", () => {
+  let reads = 0
+  const db = makeFakeDatabase({
+    all: (sql) => {
+      if (sql.includes("SELECT station_code, capacity FROM stations")) {
+        reads += 1
+        return [
+          { station_code: 2009, capacity: 20 },
+          { station_code: 2010, capacity: 15 }
+        ]
+      }
+      throw new Error(`Unexpected query: ${sql}`)
+    }
+  })
+
+  return Effect.gen(function*() {
+    const repository = yield* VelibRepository
+    const first = yield* repository.capacities()
+    const second = yield* repository.capacities()
+
+    assert.strictEqual(reads, 1)
+    assert.strictEqual(first.get(2009), 20)
+    assert.strictEqual(second, first)
+  }).pipe(Effect.provide(makeVelibRepositoryLive(db)))
+})

@@ -43,6 +43,7 @@ Open <http://127.0.0.1:5173>. See [Development](docs/development.md) to populate
 - [Development](docs/development.md) — local setup, commands, and troubleshooting
 - [Architecture](docs/architecture.md) — runtime components, storage, and data flows
 - [Operations](docs/operations.md) — deployment, rollback, and D1 recovery
+- [Analytics archive](docs/analytics.md) — CPU-gated Pipelines and R2 Data Catalog rollout
 
 ## Data and attribution
 

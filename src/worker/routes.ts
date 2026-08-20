@@ -15,6 +15,7 @@ import {
   RETENTION_SECONDS,
 } from "./domain"
 import { VelibRepository } from "./repository"
+import { StationHistory, StationHistoryError } from "./station-history"
 import {
   openReplayCache,
   readReplayCache,
@@ -248,7 +249,8 @@ const routeRequest = Effect.fn("routeRequest")(function*(request: Request) {
     if (parts.length === 4 && parts[3] === "history") {
       yield* validateSearchParams(url, historySearchParams)
       const range = yield* parseRange(url.searchParams.get("range"))
-      return jsonResponse(yield* repository.history(code, range, now), 200, "public, max-age=30")
+      const history = yield* StationHistory
+      return jsonResponse(yield* history.history(code, range, now), 200, "public, max-age=30")
     }
   }
 
@@ -270,6 +272,13 @@ export const handleRequest = (request: Request) =>
           detail: error.detail
         }).pipe(
           Effect.as(errorResponse(503, "storage_unavailable", "Data is temporarily unavailable"))
+        ),
+      StationHistoryError: (error: StationHistoryError) =>
+        Effect.logError("Archive history failure", {
+          operation: error.operation,
+          detail: error.detail
+        }).pipe(
+          Effect.as(errorResponse(503, "history_unavailable", "Station history is temporarily unavailable"))
         ),
       VerificationFailed: (error: VerificationFailed) =>
         Effect.succeed(errorResponse(403, "verification_failed", error.message)),

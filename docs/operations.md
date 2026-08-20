@@ -116,4 +116,4 @@ After restoration, deploy a schema-compatible Worker if necessary and repeat the
 
 Workers Logs and Traces use full (`1.0`) head sampling. Before adding high-volume logging or custom spans, remove redundant per-query or per-item telemetry and check current Cloudflare usage and retention. Automatic Cloudflare spans already cover D1 and Durable Object binding calls.
 
-See [Development](development.md) for local setup and troubleshooting. See [Architecture](architecture.md) for runtime and storage design.
+See [Development](development.md) for local setup and troubleshooting. See [Architecture](architecture.md) for runtime and storage design. See [Analytics archive](analytics.md) before enabling Pipelines or the R2 history backend.

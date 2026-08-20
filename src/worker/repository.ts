@@ -48,6 +48,10 @@ const MetadataRow = Schema.Struct({
   metadata_updated_at: Schema.Number
 })
 
+const CapacityRow = Schema.Struct({
+  station_code: Schema.Number,
+  capacity: Schema.Number
+})
 const StateValueRow = Schema.Struct({ value: Schema.Number })
 const CompletionRow = Schema.Struct({ sample_count: Schema.Number })
 
@@ -131,6 +135,7 @@ export class VelibRepository extends Context.Service<VelibRepository, {
     stations: ReadonlyArray<StationMetadata>,
     syncedAt: number
   ) => Effect.Effect<void, RepositoryError>
+  readonly capacities: () => Effect.Effect<ReadonlyMap<number, number>, RepositoryError>
   readonly persistSnapshot: (
     record: SnapshotRecord,
     encoded: EncodedSnapshot
@@ -140,6 +145,9 @@ export class VelibRepository extends Context.Service<VelibRepository, {
   ) => Effect.Effect<void, RepositoryError>
   readonly cleanup: (observedAt: number) => Effect.Effect<void, RepositoryError>
   readonly recordCollection: (record: CollectionRecord) => Effect.Effect<void, RepositoryError>
+  readonly metadata: (
+    code: number
+  ) => Effect.Effect<StationMetadata, RepositoryError | NotFoundError>
   readonly live: (now: number) => Effect.Effect<LiveResponse, RepositoryError | NotFoundError>
   readonly station: (code: number) => Effect.Effect<StationResponse, RepositoryError | NotFoundError>
   readonly history: (
@@ -247,6 +255,7 @@ const metadataFromRow = (row: typeof MetadataRow.Type): StationMetadata =>
   })
 
 const makeRepository = (db: D1Database): VelibRepository["Service"] => {
+  let capacityCache: ReadonlyMap<number, number> | null = null
   let latestCache: SnapshotRecord | null = null
 
   const loadMetadata = Effect.fn("VelibRepository.loadMetadata")(function*() {
@@ -258,6 +267,18 @@ const makeRepository = (db: D1Database): VelibRepository["Service"] => {
     )
     const decoded = yield* decodeRows(Schema.Array(MetadataRow), rows, "loadMetadata")
     return decoded.map(metadataFromRow)
+  })
+
+  const loadCapacities = Effect.fn("VelibRepository.loadCapacities")(function*() {
+    if (capacityCache !== null) return capacityCache
+
+    const rows = yield* allRows(
+      db.prepare("SELECT station_code, capacity FROM stations ORDER BY station_code"),
+      "loadCapacities"
+    )
+    const decoded = yield* decodeRows(Schema.Array(CapacityRow), rows, "loadCapacities")
+    capacityCache = new Map(decoded.map((row) => [row.station_code, row.capacity]))
+    return capacityCache
   })
 
   const loadMetadataStation = Effect.fn("VelibRepository.loadMetadataStation")(function*(code: number) {
@@ -416,6 +437,7 @@ const makeRepository = (db: D1Database): VelibRepository["Service"] => {
       ).bind(syncedAt),
       "syncMetadata.complete"
     )
+    capacityCache = new Map(stations.map((station) => [station.stationCode, station.capacity]))
   })
 
   const persistSnapshot = Effect.fn("VelibRepository.persistSnapshot")(function*(
@@ -1162,10 +1184,12 @@ const makeRepository = (db: D1Database): VelibRepository["Service"] => {
     hasMetadata,
     needsMetadata,
     syncMetadata,
+    capacities: loadCapacities,
     persistSnapshot,
     createRollups,
     cleanup,
     recordCollection,
+    metadata: loadMetadataStation,
     live: buildLive,
     station,
     history,

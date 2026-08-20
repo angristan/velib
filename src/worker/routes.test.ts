@@ -4,6 +4,7 @@ import { Effect } from "effect"
 import { AccessControl, TurnstileUnavailable } from "./access"
 import { VelibRepository } from "./repository"
 import { handleRequest, testExports } from "./routes"
+import { StationHistory } from "./station-history"
 
 it("returns 503 when human verification is unavailable", async () => {
   const request = new Request("https://velib.example.test/api/session", {
@@ -18,7 +19,11 @@ it("returns 503 when human verification is unavailable", async () => {
         create: () => Effect.fail(TurnstileUnavailable.make({ cause: new Error("offline") })),
         status: () => Effect.succeed({ verified: false, turnstileSiteKey: "test-site-key" }),
       }),
+      Effect.provideService(StationHistory, {
+        history: () => Effect.die("unused"),
+      }),
       Effect.provideService(VelibRepository, {
+        capacities: () => Effect.die("unused"),
         cleanup: () => Effect.die("unused"),
         createRollups: () => Effect.die("unused"),
         hasMetadata: () => Effect.die("unused"),
@@ -26,6 +31,7 @@ it("returns 503 when human verification is unavailable", async () => {
         history: () => Effect.die("unused"),
         latestSourceUpdatedAt: () => Effect.die("unused"),
         live: () => Effect.die("unused"),
+        metadata: () => Effect.die("unused"),
         needsMetadata: () => Effect.die("unused"),
         persistSnapshot: () => Effect.die("unused"),
         recordCollection: () => Effect.die("unused"),

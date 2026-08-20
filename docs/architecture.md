@@ -46,7 +46,7 @@ The interface fetches an authoritative baseline from the API and applies compact
 
 ### Scheduled collection
 
-The Worker’s cron trigger runs every minute. Collection decodes the upstream Vélib’ Métropole GBFS feeds, updates station metadata and latest status, writes one compressed minute snapshot, derives completed five-minute rollups, and broadcasts a compact diff.
+The Worker’s cron trigger runs every minute. Collection decodes the upstream Vélib’ Métropole GBFS feeds, updates station metadata and latest status, writes one compressed minute snapshot, and broadcasts a compact diff. The default D1 history backend also derives completed five-minute rollups.
 
 Collection begins after deployment; there is no required historical backfill. Stale and failed collections are recorded in `collection_runs` for health reporting.
 
@@ -63,7 +63,13 @@ D1 is authoritative. The schema stores:
 
 Minute snapshots and rollups retain seven days of local history. Exact-key cleanup handles the normal retention path; bounded recovery passes remove older rows left by interrupted collections.
 
-The snapshot endpoint reads one compressed retained state for fast logarithmic timeline navigation and before/after comparison. The replay endpoint scans a bounded minute window and returns one compact baseline followed by sparse sequential changes only when one-hour playback starts. Station charts read five-minute rollups rather than a row-per-station-per-minute history table.
+The snapshot endpoint reads one compressed retained state for fast logarithmic timeline navigation and before/after comparison. The replay endpoint scans a bounded minute window and returns one compact baseline followed by sparse sequential changes only when one-hour playback starts. Station charts read five-minute rollups rather than a row-per-station-per-minute D1 history table.
+
+### Optional analytics archive
+
+A feature-gated Pipeline binding can copy successful station-minute observations into an R2 Data Catalog Iceberg table. Pipeline failure does not fail authoritative D1 collection. When the R2 history backend is fully configured, R2 SQL serves 3-hour, 1-day, and 7-day station history and the collector stops building D1 rollups. Exact one-hour history and replay remain on D1.
+
+See [Analytics archive](analytics.md) for resource ownership, rollout, CPU acceptance, and rollback.
 
 ### LiveFeed Durable Object
 
