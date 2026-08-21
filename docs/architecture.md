@@ -67,7 +67,7 @@ The snapshot endpoint reads one compressed retained state for fast logarithmic t
 
 ### Optional analytics archive
 
-A feature-gated Pipeline binding can copy successful station-minute observations into an R2 Data Catalog Iceberg table. Pipeline failure does not fail authoritative D1 collection. When the R2 history backend is fully configured, R2 SQL serves 3-hour, 1-day, and 7-day station history and the collector stops building D1 rollups. Exact one-hour history and replay remain on D1.
+A feature-gated Pipeline binding can copy successful station-minute observations into an R2 Data Catalog Iceberg table. The authoritative D1 snapshot transaction also queues immutable archive inputs in an outbox. Scheduled work claims a bounded batch with a lease, retries Pipeline acceptance, and removes each claim only after success. Pipeline failure does not fail D1 collection, and later Cron runs retry the retained snapshot. When the R2 history backend is fully configured, R2 SQL serves 3-hour, 1-day, and 7-day station history and the collector stops building D1 rollups. Exact one-hour history and replay remain on D1.
 
 See [Analytics archive](analytics.md) for resource ownership, rollout, CPU acceptance, and rollback.
 

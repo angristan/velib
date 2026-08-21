@@ -47,13 +47,19 @@ The catalog sink needs a dedicated R2 Admin Read & Write account token. Do not p
 
 The Worker needs a separate `R2_SQL_TOKEN` secret with read access to R2 SQL, R2 Data Catalog, and the `velib-analytics` bucket. Upload it only before the R2 history stage. Never store either token in this repository or OpenTofu state.
 
+## Delivery durability
+
+A successful minute snapshot and its immutable capacity map enter `station_observation_outbox` in the same D1 batch. Each Cron invocation leases at most three oldest entries. Each entry gets three bounded Pipeline acceptance attempts. Success deletes the entry. Failure applies bounded exponential backoff, and later Cron runs retry it. A Worker interruption after acceptance can send the same event again, so `event_id` stays deterministic and R2 SQL removes duplicate effects.
+
+Outbox retention matches the seven-day D1 snapshot retention. Monitor both pending entries and D1-to-R2 station-minute gaps. Reconcile every gap before enabling R2 history.
+
 ## Safe rollout
 
 1. Add and review the account resources in `cloudflare-tf`.
 2. Review the complete OpenTofu plan before any apply.
 3. Add the resulting stream ID as the `OBSERVATIONS` Pipeline binding in `wrangler.jsonc`.
 4. Keep `HISTORY_BACKEND` set to `d1`. This shadows station observations while D1 continues to serve history and build rollups.
-5. Verify Pipeline error metrics, Iceberg row counts, duplicate event IDs, and missing station-minutes. The Worker retries stream acceptance three times, but it has no durable cross-product transaction with D1. Alert and reconcile any remaining gap before disabling D1 rollups.
+5. Verify Pipeline error metrics, outbox depth, Iceberg row counts, duplicate event IDs, and missing station-minutes. Alert and reconcile any remaining gap before disabling D1 rollups.
 6. Wait until the archive contains the complete history range required by the interface.
 7. Upload the `R2_SQL_TOKEN` Worker secret.
 8. Change `HISTORY_BACKEND` to `r2` and deploy.

@@ -81,6 +81,7 @@ it.effect("validates the authoritative latest header before reusing the warm sna
   let fullPayloadReads = 0
   const persistedPayloads: string[] = []
   const persistedUpdates: string[] = []
+  const persistedArchiveCapacities: string[] = []
 
   const db = makeFakeDatabase({
     first: (sql) => {
@@ -113,6 +114,12 @@ it.effect("validates the authoritative latest header before reusing the warm sna
         }
         persistedPayloads.push(payload as string)
       }
+      const archiveStatement = statements.find((candidate) =>
+        candidate.sql.includes("INSERT OR IGNORE INTO station_observation_outbox")
+      )
+      if (archiveStatement !== undefined) {
+        persistedArchiveCapacities.push(archiveStatement.values[2] as string)
+      }
       const updateStatement = statements.find((candidate) =>
         candidate.sql.includes("INSERT OR IGNORE INTO minute_updates")
       )
@@ -129,8 +136,16 @@ it.effect("validates the authoritative latest header before reusing the warm sna
     const secondEncoded = yield* encodeSnapshot(second.snapshot)
     const repository = yield* VelibRepository
 
-    const firstResult = yield* repository.persistSnapshot(first, firstEncoded)
-    const secondResult = yield* repository.persistSnapshot(second, secondEncoded)
+    const firstResult = yield* repository.persistSnapshot(
+      first,
+      firstEncoded,
+      new Map([[2009, 15]])
+    )
+    const secondResult = yield* repository.persistSnapshot(
+      second,
+      secondEncoded,
+      new Map([[2009, 16]])
+    )
     const latestTimestamp = yield* repository.latestSourceUpdatedAt()
 
     assert.deepEqual(firstResult.previous, initial)
@@ -142,6 +157,10 @@ it.effect("validates the authoritative latest header before reusing the warm sna
     assert.deepEqual(persistedPayloads, [firstEncoded.text, secondEncoded.text])
     assert.strictEqual(persistedUpdates.length, 2)
     assert.strictEqual(JSON.parse(persistedUpdates[1] ?? "null").sourceUpdatedAt, 178)
+    assert.deepEqual(persistedArchiveCapacities.map((payload) => JSON.parse(payload)), [
+      [[2009, 15]],
+      [[2009, 16]]
+    ])
   }).pipe(Effect.provide(makeVelibRepositoryLive(db)))
 })
 
@@ -306,10 +325,11 @@ it.effect("runs cleanup without station lookup round trips", () => {
     yield* repository.cleanup(observedAt)
 
     assert.strictEqual(batches.length, 1)
-    assert.strictEqual(batches[0]?.length, 7)
-    assert.include(batches[0]?.[1]?.sql ?? "", "DELETE FROM minute_updates")
-    const rotatingCleanup = batches[0]?.[5]
-    const bucketCleanup = batches[0]?.[6]
+    assert.strictEqual(batches[0]?.length, 8)
+    assert.include(batches[0]?.[0]?.sql ?? "", "DELETE FROM station_observation_outbox")
+    assert.include(batches[0]?.[2]?.sql ?? "", "DELETE FROM minute_updates")
+    const rotatingCleanup = batches[0]?.[6]
+    const bucketCleanup = batches[0]?.[7]
     assert.isDefined(rotatingCleanup)
     assert.isDefined(bucketCleanup)
     assert.include(rotatingCleanup.sql, "station_code IN")

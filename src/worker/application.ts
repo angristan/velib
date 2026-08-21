@@ -1,6 +1,5 @@
 import { Effect } from "effect"
 
-import type { ArchiveBatch } from "./archive"
 import { encodeSnapshot } from "./codec"
 import {
   AppError,
@@ -18,7 +17,6 @@ export interface CollectionOptions {
 }
 
 export interface CollectionResult {
-  readonly archive: ArchiveBatch | null
   readonly liveUpdate: PersistSnapshotResult["liveUpdate"]
 }
 
@@ -74,19 +72,17 @@ export const collectMinute = Effect.fn("collectMinute")(function*(
       snapshot
     }
     const encoded = yield* encodeSnapshot(snapshot)
-    const persisted = yield* repository.persistSnapshot(record, encoded)
+    const capacities = yield* repository.capacities().pipe(
+      Effect.catch((error) =>
+        Effect.logWarning("Station capacities unavailable for archive", {
+          operation: error.operation,
+          detail: error.detail
+        }).pipe(Effect.as(new Map<number, number>()))
+      )
+    )
+    const persisted = yield* repository.persistSnapshot(record, encoded, capacities)
     const collectionStatus = persisted.status
     const liveUpdate = persisted.liveUpdate
-    const capacities = collectionStatus === "ok"
-      ? yield* repository.capacities().pipe(
-          Effect.catch((error) =>
-            Effect.logWarning("Station observation archive skipped", {
-              operation: error.operation,
-              detail: error.detail
-            }).pipe(Effect.as(null))
-          )
-        )
-      : null
 
     if (options.createRollups !== false && observedAt % ROLLUP_SECONDS === 0) {
       // Finalize one bucket late so a delayed prior Cron can persist its last minute.
@@ -115,17 +111,7 @@ export const collectMinute = Effect.fn("collectMinute")(function*(
       durationMs: run.durationMs,
       liveChanges: liveUpdate?.changes.length ?? 0
     })
-    return {
-      archive: collectionStatus === "ok" && capacities !== null
-        ? {
-            capacities,
-            observedAt,
-            sourceUpdatedAt: status.sourceUpdatedAt,
-            stations: snapshot.s
-          }
-        : null,
-      liveUpdate
-    } satisfies CollectionResult
+    return { liveUpdate } satisfies CollectionResult
   })
 
   return yield* collection.pipe(

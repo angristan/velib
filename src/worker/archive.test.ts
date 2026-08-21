@@ -1,8 +1,12 @@
 import { describe, expect, it } from "vitest"
 
 import {
+  archiveRetryDelaySeconds,
   deliverStationObservations,
+  drainStationObservationOutbox,
   stationObservationRecords,
+  type ClaimedArchive,
+  type StationObservationOutbox,
   type StationObservationPipeline
 } from "./archive"
 import { CompactStation } from "./domain"
@@ -101,5 +105,69 @@ describe("stationObservationRecords", () => {
 
     expect(delivery).toEqual({ attempts: 3, records: 1 })
     expect(waits).toEqual([1, 2])
+  })
+
+  it("drains claimed snapshots and defers work after a remote failure", async () => {
+    const station = CompactStation.make({ c: 2009, m: 5, e: 2, d: 8, o: 1, r: 58 })
+    const claim = (observedAt: number, attempts: number): ClaimedArchive => ({
+      attempts,
+      capacities: new Map([[2009, 20]]),
+      observedAt,
+      sourceUpdatedAt: observedAt - 2,
+      stations: [station]
+    })
+    const claims = [claim(60, 1), claim(120, 2), claim(180, 1)]
+    const completed: number[] = []
+    const retried: Array<readonly [number, number]> = []
+    const released: Array<readonly [ReadonlyArray<number>, number]> = []
+    const sent: number[] = []
+    const outbox: StationObservationOutbox = {
+      claim: async () => claims,
+      complete: async (observedAt) => {
+        completed.push(observedAt)
+      },
+      retry: async (observedAt, nextAttemptAt) => {
+        retried.push([observedAt, nextAttemptAt])
+      },
+      release: async (observedAts, nextAttemptAt) => {
+        released.push([observedAts, nextAttemptAt])
+      }
+    }
+    const pipeline: StationObservationPipeline = {
+      send: async (records) => {
+        const observedAt = records[0]?.observed_at ?? 0
+        sent.push(observedAt)
+        if (observedAt === 120) throw new Error("remote unavailable")
+      }
+    }
+
+    const result = await drainStationObservationOutbox(pipeline, outbox, 1_000, {
+      wait: async () => undefined
+    })
+
+    expect(result.claimed).toBe(3)
+    expect(result.deliveries).toEqual([{
+      attempts: 1,
+      observedAt: 60,
+      outboxAttempts: 1,
+      records: 1,
+      sourceUpdatedAt: 58
+    }])
+    expect(result.failed).toMatchObject({
+      observedAt: 120,
+      outboxAttempts: 2,
+      sourceUpdatedAt: 118
+    })
+    expect(sent).toEqual([60, 120, 120, 120])
+    expect(completed).toEqual([60])
+    expect(retried).toEqual([[120, 1_120]])
+    expect(released).toEqual([[[180], 1_060]])
+  })
+
+  it("caps archive retry backoff at fifteen minutes", () => {
+    expect(archiveRetryDelaySeconds(1)).toBe(60)
+    expect(archiveRetryDelaySeconds(2)).toBe(120)
+    expect(archiveRetryDelaySeconds(5)).toBe(900)
+    expect(archiveRetryDelaySeconds(20)).toBe(900)
   })
 })

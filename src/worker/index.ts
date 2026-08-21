@@ -7,9 +7,10 @@ import {
   VerificationRequired
 } from "./access"
 import { collectMinute } from "./application"
+import { ArchiveOutboxStore, makeArchiveOutboxStoreLive } from "./archive-outbox"
 import {
-  type ArchiveBatch,
-  deliverStationObservations,
+  drainStationObservationOutbox,
+  type StationObservationOutbox,
   type StationObservationPipeline
 } from "./archive"
 import { GbfsClientLive } from "./gbfs"
@@ -49,6 +50,7 @@ const r2HistoryReady = (env: RuntimeEnv): env is RuntimeEnv & {
 
 const makeRuntime = (env: RuntimeEnv) => {
   const repositoryLayer = makeVelibRepositoryLive(env.DB)
+  const archiveOutboxLayer = makeArchiveOutboxStoreLive(env.DB)
   const historyLayer = r2HistoryReady(env)
     ? makeR2StationHistoryLive({
         accountId: env.R2_SQL_ACCOUNT_ID,
@@ -61,6 +63,7 @@ const makeRuntime = (env: RuntimeEnv) => {
     Layer.mergeAll(
       GbfsClientLive,
       repositoryLayer,
+      archiveOutboxLayer,
       Layer.provide(historyLayer, repositoryLayer),
       makeAccessControlLive(env)
     )
@@ -161,24 +164,40 @@ const internalError = (): Response =>
     }
   )
 
-const deliverArchive = async (
+const makeStationObservationOutbox = (runtime: AppRuntime): StationObservationOutbox => ({
+  claim: (now, limit, leaseUntil) => runtime.runPromise(
+    Effect.flatMap(ArchiveOutboxStore, (outbox) => outbox.claim(now, limit, leaseUntil))
+  ),
+  complete: (observedAt) => runtime.runPromise(
+    Effect.flatMap(ArchiveOutboxStore, (outbox) => outbox.complete(observedAt))
+  ),
+  retry: (observedAt, nextAttemptAt) => runtime.runPromise(
+    Effect.flatMap(ArchiveOutboxStore, (outbox) => outbox.retry(observedAt, nextAttemptAt))
+  ),
+  release: (observedAts, nextAttemptAt) => runtime.runPromise(
+    Effect.flatMap(ArchiveOutboxStore, (outbox) => outbox.release(observedAts, nextAttemptAt))
+  )
+})
+
+const deliverArchives = async (
+  runtime: AppRuntime,
   pipeline: StationObservationPipeline,
-  archive: ArchiveBatch
+  now: number
 ): Promise<void> => {
   try {
-    const delivery = await deliverStationObservations(pipeline, archive)
-    console.info("Station observations archived", {
-      observedAt: archive.observedAt,
-      sourceUpdatedAt: archive.sourceUpdatedAt,
-      records: delivery.records,
-      attempts: delivery.attempts
-    })
+    const result = await drainStationObservationOutbox(
+      pipeline,
+      makeStationObservationOutbox(runtime),
+      now
+    )
+    for (const delivery of result.deliveries) {
+      console.info("Station observations archived", delivery)
+    }
+    if (result.failed !== null) {
+      console.error("Station observation archive failed", result.failed)
+    }
   } catch (cause) {
-    console.error("Station observation archive failed", {
-      observedAt: archive.observedAt,
-      sourceUpdatedAt: archive.sourceUpdatedAt,
-      cause
-    })
+    console.error("Station observation outbox failed", { cause })
   }
 }
 
@@ -230,10 +249,11 @@ const worker: ExportedHandler<RuntimeEnv> = {
         })
       )
     )
-    const ingestion = runtimeFor(env).runPromise(program).then(async (result) => {
+    const runtime = runtimeFor(env)
+    const ingestion = runtime.runPromise(program).then(async (result) => {
       const deliveries: Array<Promise<void>> = []
-      if (result.archive !== null && env.OBSERVATIONS !== undefined) {
-        deliveries.push(deliverArchive(env.OBSERVATIONS, result.archive))
+      if (env.OBSERVATIONS !== undefined) {
+        deliveries.push(deliverArchives(runtime, env.OBSERVATIONS, observedAt))
       }
       const liveUpdate = result.liveUpdate
       if (liveUpdate !== null) {

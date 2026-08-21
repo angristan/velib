@@ -19,6 +19,47 @@ export interface ArchiveDelivery {
   readonly records: number
 }
 
+export interface ClaimedArchive extends ArchiveBatch {
+  readonly attempts: number
+}
+
+export interface StationObservationOutbox {
+  readonly claim: (
+    now: number,
+    limit: number,
+    leaseUntil: number
+  ) => Promise<ReadonlyArray<ClaimedArchive>>
+  readonly complete: (observedAt: number) => Promise<void>
+  readonly retry: (observedAt: number, nextAttemptAt: number) => Promise<void>
+  readonly release: (
+    observedAts: ReadonlyArray<number>,
+    nextAttemptAt: number
+  ) => Promise<void>
+}
+
+export interface ArchiveDrainDelivery extends ArchiveDelivery {
+  readonly observedAt: number
+  readonly sourceUpdatedAt: number
+  readonly outboxAttempts: number
+}
+
+export interface ArchiveDrainResult {
+  readonly claimed: number
+  readonly deliveries: ReadonlyArray<ArchiveDrainDelivery>
+  readonly failed: null | {
+    readonly observedAt: number
+    readonly sourceUpdatedAt: number
+    readonly outboxAttempts: number
+    readonly cause: unknown
+  }
+}
+
+export interface ArchiveDrainOptions {
+  readonly leaseSeconds?: number
+  readonly limit?: number
+  readonly wait?: (attempt: number) => Promise<void>
+}
+
 export const stationObservationRecords = (
   batch: ArchiveBatch
 ): Array<StationObservationRecord> => {
@@ -66,4 +107,58 @@ export const deliverStationObservations = async (
   }
 
   throw lastFailure
+}
+
+export const archiveRetryDelaySeconds = (attempts: number): number =>
+  Math.min(15 * 60, 60 * 2 ** Math.min(Math.max(0, attempts - 1), 4))
+
+export const drainStationObservationOutbox = async (
+  pipeline: StationObservationPipeline,
+  outbox: StationObservationOutbox,
+  now: number,
+  options: ArchiveDrainOptions = {}
+): Promise<ArchiveDrainResult> => {
+  const limit = options.limit ?? 3
+  const leaseUntil = now + (options.leaseSeconds ?? 180)
+  const claims = await outbox.claim(now, limit, leaseUntil)
+  const deliveries: Array<ArchiveDrainDelivery> = []
+
+  for (let index = 0; index < claims.length; index += 1) {
+    const claim = claims[index]
+    try {
+      const delivery = await deliverStationObservations(
+        pipeline,
+        claim,
+        options.wait ?? retryDelay
+      )
+      await outbox.complete(claim.observedAt)
+      deliveries.push({
+        ...delivery,
+        observedAt: claim.observedAt,
+        sourceUpdatedAt: claim.sourceUpdatedAt,
+        outboxAttempts: claim.attempts
+      })
+    } catch (cause) {
+      await outbox.retry(
+        claim.observedAt,
+        now + archiveRetryDelaySeconds(claim.attempts)
+      )
+      const unattempted = claims.slice(index + 1).map(({ observedAt }) => observedAt)
+      if (unattempted.length > 0) {
+        await outbox.release(unattempted, now + 60)
+      }
+      return {
+        claimed: claims.length,
+        deliveries,
+        failed: {
+          observedAt: claim.observedAt,
+          sourceUpdatedAt: claim.sourceUpdatedAt,
+          outboxAttempts: claim.attempts,
+          cause
+        }
+      }
+    }
+  }
+
+  return { claimed: claims.length, deliveries, failed: null }
 }

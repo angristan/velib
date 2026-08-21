@@ -2,6 +2,7 @@ import { env } from "cloudflare:workers"
 import { Effect } from "effect"
 import { describe, expect, it } from "vitest"
 
+import { ArchiveOutboxStore, makeArchiveOutboxStoreLive } from "./archive-outbox"
 import { encodeSnapshot } from "./codec"
 import {
   CompactSnapshot,
@@ -21,6 +22,7 @@ describe("Worker runtime bindings", () => {
     expect(tables.results.map(({ name }) => name)).toContain("stations")
     expect(tables.results.map(({ name }) => name)).toContain("minute_snapshots")
     expect(tables.results.map(({ name }) => name)).toContain("minute_updates")
+    expect(tables.results.map(({ name }) => name)).toContain("station_observation_outbox")
   })
 
   it("bulk upserts station rollups through real D1 JSON functions", async () => {
@@ -89,6 +91,57 @@ describe("Worker runtime bindings", () => {
       "SELECT 1 FROM station_rollups_5m WHERE station_code = ? AND bucket_at = ?",
     ).bind(stationCode, bucketAt).first()
     expect(cleaned).toBeNull()
+  })
+
+  it("claims and completes a durable archive from real D1", async () => {
+    const observedAt = 1_500_000
+    const snapshot = CompactSnapshot.make({
+      v: 1,
+      s: [CompactStation.make({
+        c: 880_001,
+        m: 4,
+        e: 3,
+        d: 9,
+        o: 1,
+        r: observedAt - 2,
+      })],
+    })
+    const encoded = await Effect.runPromise(encodeSnapshot(snapshot))
+    await env.DB.batch([
+      env.DB.prepare(
+        `INSERT INTO minute_snapshots
+           (observed_at, source_updated_at, station_count, payload)
+         VALUES (?, ?, ?, ?)`,
+      ).bind(observedAt, observedAt - 2, 1, encoded.compressed),
+      env.DB.prepare(
+        `INSERT INTO station_observation_outbox
+           (observed_at, source_updated_at, capacities, next_attempt_at)
+         VALUES (?, ?, ?, ?)`,
+      ).bind(observedAt, observedAt - 2, JSON.stringify([[880_001, 20]]), observedAt),
+    ])
+
+    const claims = await Effect.runPromise(
+      Effect.gen(function*() {
+        const outbox = yield* ArchiveOutboxStore
+        return yield* outbox.claim(observedAt + 60, 3, observedAt + 240)
+      }).pipe(Effect.provide(makeArchiveOutboxStoreLive(env.DB))),
+    )
+
+    expect(claims).toHaveLength(1)
+    expect(claims[0]?.attempts).toBe(1)
+    expect(claims[0]?.capacities.get(880_001)).toBe(20)
+    expect(claims[0]?.stations).toEqual(snapshot.s)
+
+    await Effect.runPromise(
+      Effect.gen(function*() {
+        const outbox = yield* ArchiveOutboxStore
+        yield* outbox.complete(observedAt)
+      }).pipe(Effect.provide(makeArchiveOutboxStoreLive(env.DB))),
+    )
+    const pending = await env.DB.prepare(
+      "SELECT 1 FROM station_observation_outbox WHERE observed_at = ?",
+    ).bind(observedAt).first()
+    expect(pending).toBeNull()
   })
 
   it("replays from one baseline and persisted minute updates", async () => {

@@ -138,7 +138,8 @@ export class VelibRepository extends Context.Service<VelibRepository, {
   readonly capacities: () => Effect.Effect<ReadonlyMap<number, number>, RepositoryError>
   readonly persistSnapshot: (
     record: SnapshotRecord,
-    encoded: EncodedSnapshot
+    encoded: EncodedSnapshot,
+    capacities?: ReadonlyMap<number, number>
   ) => Effect.Effect<PersistSnapshotResult, RepositoryError>
   readonly createRollups: (
     bucketAts: ReadonlyArray<number>
@@ -442,7 +443,8 @@ const makeRepository = (db: D1Database): VelibRepository["Service"] => {
 
   const persistSnapshot = Effect.fn("VelibRepository.persistSnapshot")(function*(
     record: SnapshotRecord,
-    encoded: EncodedSnapshot
+    encoded: EncodedSnapshot,
+    capacities: ReadonlyMap<number, number> = new Map()
   ) {
     const previous = yield* loadLatestRecord()
     const status: CollectionStatus = previous !== null && (
@@ -455,6 +457,10 @@ const makeRepository = (db: D1Database): VelibRepository["Service"] => {
     const liveUpdatePayload = liveUpdate === null
       ? null
       : yield* stringify(liveUpdate, "serializeLiveUpdate")
+    const archiveCapacities = yield* stringify(
+      [...capacities.entries()],
+      "serializeArchiveCapacities"
+    )
     const statements = [
       db.prepare(
         `INSERT OR IGNORE INTO minute_snapshots
@@ -465,6 +471,16 @@ const makeRepository = (db: D1Database): VelibRepository["Service"] => {
         record.sourceUpdatedAt,
         record.snapshot.s.length,
         encoded.compressed
+      ),
+      db.prepare(
+        `INSERT OR IGNORE INTO station_observation_outbox
+           (observed_at, source_updated_at, capacities, next_attempt_at)
+         VALUES (?, ?, ?, ?)`
+      ).bind(
+        record.observedAt,
+        record.sourceUpdatedAt,
+        archiveCapacities,
+        record.observedAt
       ),
       db.prepare(
         `INSERT INTO latest_status (singleton, observed_at, source_updated_at, payload)
@@ -809,6 +825,7 @@ const makeRepository = (db: D1Database): VelibRepository["Service"] => {
     const cutoff = observedAt - RETENTION_SECONDS
     const cleanupSlot = Math.floor(observedAt / MINUTE_SECONDS) % 300
     const statements: Array<D1PreparedStatement> = [
+      db.prepare("DELETE FROM station_observation_outbox WHERE observed_at < ?").bind(cutoff),
       db.prepare("DELETE FROM minute_snapshots WHERE observed_at < ?").bind(cutoff),
       db.prepare("DELETE FROM minute_updates WHERE observed_at < ?").bind(cutoff),
       db.prepare("DELETE FROM collection_runs WHERE observed_at < ?").bind(cutoff),
