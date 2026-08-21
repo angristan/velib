@@ -133,8 +133,13 @@ const parseStationCode = Effect.fn("parseStationCode")(function*(value: string) 
 
 const parseRange = Effect.fn("parseHistoryRange")(function*(value: string | null) {
   const range = value ?? "1h"
-  if (range !== "1h" && range !== "3h" && range !== "1d" && range !== "7d") {
-    return yield* RequestError.make({ detail: "range must be one of 1h, 3h, 1d, or 7d" })
+  if (
+    range !== "1h" && range !== "3h" && range !== "1d" &&
+    range !== "7d" && range !== "30d" && range !== "1y"
+  ) {
+    return yield* RequestError.make({
+      detail: "range must be one of 1h, 3h, 1d, 7d, 30d, or 1y"
+    })
   }
   const parsed: HistoryRange = range
   return parsed
@@ -250,14 +255,17 @@ const routeRequest = Effect.fn("routeRequest")(function*(request: Request) {
       yield* validateSearchParams(url, historySearchParams)
       const range = yield* parseRange(url.searchParams.get("range"))
       const history = yield* StationHistory
-      return jsonResponse(yield* history.history(code, range, now), 200, "public, max-age=30")
+      const cacheControl = range === "30d" || range === "1y"
+        ? "public, max-age=300"
+        : "public, max-age=30"
+      return jsonResponse(yield* history.history(code, range, now), 200, cacheControl)
     }
   }
 
   return errorResponse(404, "not_found", "API route not found")
 })
 
-export const testExports = { parseSessionVerification }
+export const testExports = { parseRange, parseSessionVerification }
 
 export const handleRequest = (request: Request) =>
   routeRequest(request).pipe(

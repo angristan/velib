@@ -1,72 +1,85 @@
-# Analytics archive
+# Analytics and long-term history
 
-The optional analytics path moves long-range station history computation out of the Worker. D1 remains authoritative for live state, replay, and exact one-hour history.
+D1 remains authoritative for collection, live state, replay, and the hot seven-day window. R2 has two separate roles: immutable raw observations for offline analysis and compact rollup objects for fast long-range charts.
 
 ```text
 minute collection
-   ├── D1 snapshot ──▶ live, replay, one-hour history
-   └── Pipeline stream ──▶ R2 Data Catalog ──▶ R2 SQL long-range history
+   ├── D1 snapshots + 5-minute rollups ──▶ live, replay, 1h/3h/1d/7d
+   ├── Pipeline ──▶ Iceberg raw observations ──▶ offline R2 SQL
+   └── bounded daily exporter ──▶ monthly R2 rollup objects ──▶ 30d/1y
 ```
 
-## CPU objective
+R2 SQL is intentionally not in the interactive request path. Production benchmarks of station-scoped SQL varied from about 3 to 12 seconds, including repeated cached queries. Direct R2 object reads provide a bounded serving path instead.
 
-The production baseline measured before this change was:
-
-| Invocation | Samples | Average CPU | P50 | P95 | P99 |
-| --- | ---: | ---: | ---: | ---: | ---: |
-| Cron | 360 | 140 ms | 112 ms | 286 ms | 333 ms |
-| Durable Object RPC | 350 | 11 ms | 11 ms | 19 ms | 24 ms |
-
-The R2 backend disables D1 five-minute rollup creation. It is successful only if Cron CPU per hour and P95 both decrease by at least 20% over a comparable 24-hour period. API correctness, freshness, latency, and error rate must not regress materially.
-
-## Resources
+## Raw archive
 
 Durable account resources belong in `cloudflare-tf`:
 
 - R2 bucket: `velib-analytics`
-- R2 Data Catalog namespace: `velib`
+- Data Catalog namespace: `velib`
 - Iceberg table: `station_observations_v1`
 - Pipeline stream: `velib_station_observations_stream_v1`
 - Pipeline sink: `velib_station_observations_catalog_v1`
 - Pipeline: `velib_station_observations_v1`
 
-The stream uses `pipelines/station-observations.schema.json`. The pipeline uses `pipelines/station-observations.sql`. Disable the stream HTTP endpoint. Add the resulting stream ID to `wrangler.jsonc`:
+The Worker owns the `OBSERVATIONS` Pipeline binding and the `HISTORY_ROLLUPS` R2 bucket binding in `wrangler.jsonc`.
 
-```json
-{
-  "pipelines": [
-    {
-      "binding": "OBSERVATIONS",
-      "stream": "<stream-id>"
-    }
-  ]
-}
+A successful minute snapshot and its immutable capacity map enter `station_observation_outbox` in the same D1 batch. Scheduled work leases at most three entries, retries Pipeline acceptance, and deletes an entry only after acceptance. Deterministic `event_id` values make ambiguous retries safe; offline SQL must deduplicate by `event_id` and latest `__ingest_ts`.
+
+Pipeline failure never fails authoritative D1 collection. Raw observations are for repair, export, and exceptional analysis—not normal page loads.
+
+## Precomputed rollup objects
+
+Each station has one gzip JSON object per UTC calendar month:
+
+```text
+rollups/v1/stations/{station-code}/{month-start-unix}.json.gz
 ```
 
-The catalog sink needs a dedicated R2 Admin Read & Write account token. Do not pass it through OpenTofu. Store it in the approved secret manager, register it through the Data Catalog credential API, and create the sink through the Pipeline API. Then declare and import the sink in `cloudflare-tf` with `config.token` omitted. Verify that the imported state has no bearer token and that a targeted plan is clean. Sink configuration is immutable, so credential replacement needs a reviewed sink and pipeline recreation.
+The versioned object contains compact one-hour aggregates. The API returns:
 
-The Worker needs a separate `R2_SQL_TOKEN` secret with read access to R2 SQL, R2 Data Catalog, and the `velib-analytics` bucket. Upload it only before the R2 history stage. Never store either token in this repository or OpenTofu state.
+| Range | Source | Resolution |
+| --- | --- | ---: |
+| `1h` | D1 minute snapshots | 1 minute |
+| `3h`, `1d`, `7d` | D1 station rollups | 5 minutes |
+| `30d` | monthly R2 objects plus D1 overlap | 1 hour |
+| `1y` | monthly R2 objects plus D1 overlap | 6 hours |
 
-## Delivery durability
+D1 wins for overlapping timestamps. This keeps current data fresh while the current-month object is updated and lets object export lag without creating a chart gap.
 
-A successful minute snapshot and its immutable capacity map enter `station_observation_outbox` in the same D1 batch. Each Cron invocation leases at most three oldest entries. Each entry gets three bounded Pipeline acceptance attempts. Success deletes the entry. Failure applies bounded exponential backoff, and later Cron runs retry it. A Worker interruption after acceptance can send the same event again, so `event_id` stays deterministic and R2 SQL removes duplicate effects.
+## Durable generation
 
-Outbox retention matches the seven-day D1 snapshot retention. Monitor both pending entries and D1-to-R2 station-minute gaps. Reconcile every gap before enabling R2 history.
+Migration `0006_station_rollup_archive.sql` adds day markers and a leased job queue. At minute 15 of every UTC hour, the Worker reconciles the six most recent complete days; day markers make repeated scheduling idempotent.
 
-## Safe rollout
+Each scheduled invocation:
 
-1. Add and review the account resources in `cloudflare-tf`.
-2. Review the complete OpenTofu plan before any apply.
-3. Add the resulting stream ID as the `OBSERVATIONS` Pipeline binding in `wrangler.jsonc`.
-4. Keep `HISTORY_BACKEND` set to `d1`. This shadows station observations while D1 continues to serve history and build rollups.
-5. Verify Pipeline error metrics, outbox depth, Iceberg row counts, duplicate event IDs, and missing station-minutes. Alert and reconcile any remaining gap before disabling D1 rollups.
-6. Wait until the archive contains the complete history range required by the interface.
-7. Upload the `R2_SQL_TOKEN` Worker secret.
-8. Change `HISTORY_BACKEND` to `r2` and deploy.
-9. Compare at least 24 hours by `cloudflare.script_version.id` against the CPU objective.
+1. Captures up to 25 station/day payloads from retained D1 five-minute rollups.
+2. Persists the compact hourly payload in the D1 job before external I/O.
+3. Delivers up to eight prepared jobs to R2.
+4. Reads and validates the station-month object.
+5. Replaces that day and conditionally writes the new object by ETag.
+6. Deletes the job only after the R2 write succeeds.
 
-The Worker disables D1 rollups only when all R2 settings, the Pipeline binding, and the R2 SQL token are present. Missing configuration keeps the D1 path active.
+Preparation and delivery failures use bounded exponential backoff. Prepared payloads survive D1 hot-history cleanup and Worker interruption. Jobs for the same station are delivered in day order. A crash after R2 write but before D1 completion is safe because replacing the same day is idempotent.
+
+Monitor pending/unprepared jobs, oldest job age, retries, object write conflicts, and completed day markers. Object generation failure must not affect collection, Pipeline delivery, or live broadcasts.
+
+## Cost and CPU
+
+At 1,519 stations, raw Pipeline input is about 16.7 GB/month, below the Workers Paid 50 GB transform and sink allowances. Hourly monthly objects are small; one-year direct-object history is expected to remain below the standard R2 storage allowance when it is available.
+
+D1 five-minute rollups remain enabled. This design optimizes serving latency and one-year retention, not Cron CPU. The latest Pipeline-shadow run rate was about 6.7 million Cron CPU-ms/month, below the account's 30 million included CPU-ms.
+
+## Retention
+
+The intended retention is one year.
+
+- A future R2 lifecycle rule may expire only `rollups/v1/` objects after a reviewed safety margin such as 400 days.
+- Never apply a bucket lifecycle rule to Iceberg data or metadata paths.
+- Raw-table retention requires an Iceberg transaction that deletes rows by `observed_at`, followed by catalog snapshot expiration and compaction. Direct object deletion can corrupt the table.
+
+No destructive retention action is enabled by this application change. Review the exact lifecycle prefix and Iceberg maintenance plan before enabling deletion.
 
 ## Rollback
 
-D1 minute snapshots continue throughout the experiment, but D1 long-range rollups stop while the R2 backend is active. The automatic repair pass covers only the latest hour. Before switching `HISTORY_BACKEND` back to `d1`, rebuild older missing rollups from retained snapshots with a reviewed bounded backfill, or accept gaps in long-range charts. Keep the R2 backend and archive available until that recovery is complete. Do not delete the archive during rollback.
+Removing the `HISTORY_ROLLUPS` binding or tiered history deployment removes `30d` and `1y` serving but does not affect D1 collection or the existing hot history. Keep D1 rollups enabled throughout rollback. Do not delete R2 objects, raw observations, or D1 archive jobs as part of a code rollback.

@@ -12,6 +12,13 @@ import {
   type SnapshotRecord,
 } from "./domain"
 import { makeVelibRepositoryLive, VelibRepository } from "./repository"
+import {
+  DAY_SECONDS,
+  makeRollupArchiveLive,
+  RollupArchive,
+  rollupObjectKey,
+  utcMonthStart
+} from "./rollup-archive"
 
 describe("Worker runtime bindings", () => {
   it("applies the real D1 migrations", async () => {
@@ -23,6 +30,9 @@ describe("Worker runtime bindings", () => {
     expect(tables.results.map(({ name }) => name)).toContain("minute_snapshots")
     expect(tables.results.map(({ name }) => name)).toContain("minute_updates")
     expect(tables.results.map(({ name }) => name)).toContain("station_observation_outbox")
+    expect(tables.results.map(({ name }) => name)).toContain("station_rollup_archive_days")
+    expect(tables.results.map(({ name }) => name)).toContain("station_rollup_archive_jobs")
+    expect(tables.results.map(({ name }) => name)).toContain("station_rollup_archive_objects")
   })
 
   it("bulk upserts station rollups through real D1 JSON functions", async () => {
@@ -142,6 +152,143 @@ describe("Worker runtime bindings", () => {
       "SELECT 1 FROM station_observation_outbox WHERE observed_at = ?",
     ).bind(observedAt).first()
     expect(pending).toBeNull()
+  })
+
+  it("packs a completed station day into a directly readable R2 object", async () => {
+    const dayAt = 30 * DAY_SECONDS
+    const stationCode = 770_001
+    const now = dayAt + 2 * DAY_SECONDS
+    const statements: D1PreparedStatement[] = [
+      env.DB.prepare(
+        `INSERT OR REPLACE INTO stations
+           (station_code, station_id, name, latitude, longitude, capacity, metadata_updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`
+      ).bind(stationCode, String(stationCode), "Archive station", 48.85, 2.35, 20, dayAt),
+      env.DB.prepare(
+        `INSERT INTO station_rollup_archive_days (day_at, enqueued_at)
+         VALUES (?, ?)`
+      ).bind(dayAt, now),
+      env.DB.prepare(
+        `INSERT INTO station_rollup_archive_jobs
+           (day_at, station_code, next_attempt_at)
+         VALUES (?, ?, ?)`
+      ).bind(dayAt, stationCode, now)
+    ]
+    for (let index = 0; index < 12; index += 1) {
+      statements.push(env.DB.prepare(
+        `INSERT INTO station_rollups_5m (
+           station_code, bucket_at, sample_count,
+           mechanical_min, mechanical_max, mechanical_avg, mechanical_removed, mechanical_returned,
+           electric_min, electric_max, electric_avg, electric_removed, electric_returned,
+           docks_min, docks_max, docks_avg,
+           unavailable_min, unavailable_max, unavailable_avg, operative_samples
+         ) VALUES (?, ?, 5, 3, 7, 5, 1, 2, 1, 3, 2, 1, 1, 8, 12, 10, 0, 2, 1, 5)`
+      ).bind(stationCode, dayAt + index * ROLLUP_SECONDS))
+    }
+    await env.DB.batch(statements)
+
+    const result = await Effect.runPromise(
+      Effect.gen(function*() {
+        const archive = yield* RollupArchive
+        const maintenance = yield* archive.maintain(now, {
+          deliveryLimit: 1,
+          prepareLimit: 1
+        })
+        const history = yield* archive.hourlyHistory(stationCode, "30d", now)
+        return { history, maintenance }
+      }).pipe(Effect.provide(makeRollupArchiveLive(env.DB, env.HISTORY_ROLLUPS)))
+    )
+
+    expect(result.maintenance.prepared).toBe(1)
+    expect(result.maintenance.delivered).toBe(1)
+    expect(result.maintenance.failed).toBe(0)
+    expect(result.history).toHaveLength(1)
+    expect(result.history[0]?.sampleCount).toBe(60)
+    expect(result.history[0]?.mechanical.avg).toBe(5)
+    const pending = await env.DB.prepare(
+      "SELECT 1 FROM station_rollup_archive_jobs WHERE day_at = ? AND station_code = ?"
+    ).bind(dayAt, stationCode).first()
+    expect(pending).toBeNull()
+    const completed = await env.DB.prepare(
+      "SELECT completed_at FROM station_rollup_archive_days WHERE day_at = ?"
+    ).bind(dayAt).first<{ completed_at: number | null }>()
+    expect(completed?.completed_at).toBe(now)
+
+    await env.DB.batch([
+      env.DB.prepare(
+        "UPDATE station_rollups_5m SET mechanical_avg = 6 WHERE station_code = ? AND bucket_at = ?"
+      ).bind(stationCode, dayAt),
+      env.DB.prepare(
+        "INSERT INTO station_rollup_archive_jobs (day_at, station_code, next_attempt_at) VALUES (?, ?, ?)"
+      ).bind(dayAt, stationCode, now + 60)
+    ])
+    const replacement = await Effect.runPromise(
+      Effect.gen(function*() {
+        const archive = yield* RollupArchive
+        yield* archive.maintain(now + 60, { deliveryLimit: 1, prepareLimit: 1 })
+        return yield* archive.hourlyHistory(stationCode, "30d", now + 60)
+      }).pipe(Effect.provide(makeRollupArchiveLive(env.DB, env.HISTORY_ROLLUPS)))
+    )
+    expect(replacement).toHaveLength(1)
+    expect(replacement[0]?.sampleCount).toBe(60)
+    expect(replacement[0]?.mechanical.avg).toBeCloseTo(61 / 12)
+
+    await env.HISTORY_ROLLUPS.delete(rollupObjectKey(stationCode, utcMonthStart(dayAt)))
+  })
+
+  it("fails closed for a corrupt long-history object", async () => {
+    const stationCode = 775_001
+    const now = 60 * DAY_SECONDS
+    const key = rollupObjectKey(stationCode, utcMonthStart(now))
+    const input = new Blob([new TextEncoder().encode("not-json")]).stream()
+    const compressed = await new Response(
+      input.pipeThrough(new CompressionStream("gzip"))
+    ).arrayBuffer()
+    const object = await env.HISTORY_ROLLUPS.put(key, compressed)
+    expect(object).not.toBeNull()
+    if (object === null) throw new Error("Could not create corrupt R2 test fixture")
+    await env.DB.prepare(
+      `INSERT INTO station_rollup_archive_objects
+         (station_code, month_at, complete_through, etag, updated_at)
+       VALUES (?, ?, ?, ?, ?)`
+    ).bind(stationCode, utcMonthStart(now), now, object.etag, now).run()
+
+    const error = await Effect.runPromise(
+      Effect.gen(function*() {
+        const archive = yield* RollupArchive
+        return yield* Effect.flip(archive.hourlyHistory(stationCode, "30d", now))
+      }).pipe(Effect.provide(makeRollupArchiveLive(env.DB, env.HISTORY_ROLLUPS)))
+    )
+
+    expect(error._tag).toBe("RollupArchiveError")
+    await env.HISTORY_ROLLUPS.delete(key)
+    await env.DB.prepare(
+      "DELETE FROM station_rollup_archive_objects WHERE station_code = ? AND month_at = ?"
+    ).bind(stationCode, utcMonthStart(now)).run()
+  })
+
+  it("atomically enqueues recent completed days once", async () => {
+    const now = 50 * DAY_SECONDS + 15 * 60
+    const stationCode = 660_001
+    await env.DB.prepare(
+      `INSERT OR REPLACE INTO stations
+         (station_code, station_id, name, latitude, longitude, capacity, metadata_updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`
+    ).bind(stationCode, String(stationCode), "Queue station", 48.85, 2.35, 20, now).run()
+
+    const layer = makeRollupArchiveLive(env.DB, env.HISTORY_ROLLUPS)
+    await Effect.runPromise(
+      Effect.gen(function*() {
+        const archive = yield* RollupArchive
+        yield* archive.maintain(now, { deliveryLimit: 0, prepareLimit: 0 })
+        yield* archive.maintain(now, { deliveryLimit: 0, prepareLimit: 0 })
+      }).pipe(Effect.provide(layer))
+    )
+
+    const jobs = await env.DB.prepare(
+      "SELECT COUNT(*) AS count FROM station_rollup_archive_jobs WHERE station_code = ?"
+    ).bind(stationCode).first<{ count: number }>()
+    expect(jobs?.count).toBe(6)
   })
 
   it("replays from one baseline and persisted minute updates", async () => {

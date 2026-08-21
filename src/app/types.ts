@@ -1,4 +1,4 @@
-export type HistoryRange = "1h" | "3h" | "1d" | "7d"
+export type HistoryRange = "1h" | "3h" | "1d" | "7d" | "30d" | "1y"
 export type ReplayWindowMinutes = 15 | 30 | 60
 export type PlaybackSpeed = 1 | 2 | 4
 export type DataMode = "live" | "replay"

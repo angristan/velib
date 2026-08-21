@@ -11,7 +11,7 @@ import { VelibRepository } from "./repository"
 
 const unused = () => Effect.die("unused")
 
-it.effect("archives successful snapshots without running disabled rollups", () => {
+it.effect("archives successful snapshots and maintains D1 rollups", () => {
   const observedAt = 1_786_915_500
   const sourceUpdatedAt = observedAt - 20
   const station = CompactStation.make({
@@ -27,9 +27,9 @@ it.effect("archives successful snapshots without running disabled rollups", () =
   let persistedCapacities: ReadonlyMap<number, number> | undefined
 
   return Effect.gen(function*() {
-    const result = yield* collectMinute(observedAt, { createRollups: false })
+    const result = yield* collectMinute(observedAt)
 
-    assert.strictEqual(rollupCalls, 0)
+    assert.strictEqual(rollupCalls, 1)
     assert.strictEqual(persisted?.observedAt, observedAt)
     assert.deepEqual(persistedCapacities, new Map([[2009, 20]]))
     assert.deepEqual(result, { liveUpdate: null })
@@ -78,7 +78,7 @@ it.effect("does not archive a stale source observation", () => {
   const station = CompactStation.make({ c: 2009, m: 5, e: 2, d: 8, o: 1, r: observedAt - 20 })
 
   return Effect.gen(function*() {
-    const result = yield* collectMinute(observedAt, { createRollups: false })
+    const result = yield* collectMinute(observedAt)
     assert.deepEqual(result, { liveUpdate: null })
   }).pipe(
     Effect.provideService(GbfsClient, {
@@ -91,7 +91,7 @@ it.effect("does not archive a stale source observation", () => {
     Effect.provideService(VelibRepository, {
       capacities: () => Effect.succeed(new Map([[2009, 20]])),
       cleanup: () => Effect.void,
-      createRollups: unused,
+      createRollups: () => Effect.void,
       hasMetadata: unused,
       health: unused,
       history: unused,

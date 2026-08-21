@@ -64,6 +64,6 @@ it("switches the interface to English and persists the preference", async () => 
   expect(window.localStorage.getItem("velib:locale")).toBe("en")
   await waitFor(() => {
     expect(document.querySelector('meta[name="description"]')?.getAttribute("content"))
-      .toBe("Live Vélib’ availability and a seven-day history.")
+      .toBe("Live Vélib’ availability and one year of history.")
   })
 })

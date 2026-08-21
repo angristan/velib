@@ -65,11 +65,13 @@ Minute snapshots and rollups retain seven days of local history. Exact-key clean
 
 The snapshot endpoint reads one compressed retained state for fast logarithmic timeline navigation and before/after comparison. The replay endpoint scans a bounded minute window and returns one compact baseline followed by sparse sequential changes only when one-hour playback starts. Station charts read five-minute rollups rather than a row-per-station-per-minute D1 history table.
 
-### Optional analytics archive
+### Analytics archive and one-year history
 
-A feature-gated Pipeline binding can copy successful station-minute observations into an R2 Data Catalog Iceberg table. The authoritative D1 snapshot transaction also queues immutable archive inputs in an outbox. Scheduled work claims a bounded batch with a lease, retries Pipeline acceptance, and removes each claim only after success. Pipeline failure does not fail D1 collection, and later Cron runs retry the retained snapshot. When the R2 history backend is fully configured, R2 SQL serves 3-hour, 1-day, and 7-day station history and the collector stops building D1 rollups. Exact one-hour history and replay remain on D1.
+The authoritative D1 snapshot transaction also queues immutable station-minute observations for a Pipeline-backed R2 Data Catalog Iceberg table. Scheduled work leases a bounded batch, retries Pipeline acceptance, and removes each claim only after success. Pipeline failure does not fail D1 collection. Raw Iceberg observations remain an offline repair and analysis source because direct R2 SQL latency is not suitable for interactive charts.
 
-See [Analytics archive](analytics.md) for resource ownership, rollout, CPU acceptance, and rollback.
+A second bounded D1 queue compacts completed station days from the existing five-minute rollups. It stores one-hour aggregates in one gzip R2 object per station and UTC month. D1 serves `1h`, `3h`, `1d`, and `7d`; direct R2 object reads serve `30d` and `1y`, with the retained D1 window overlaid as the authoritative current tail. One-year responses aggregate hourly objects to six-hour points.
+
+See [Analytics archive](analytics.md) for object format, durability, resource ownership, retention, and rollback.
 
 ### LiveFeed Durable Object
 

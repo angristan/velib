@@ -12,10 +12,6 @@ import {
 import { GbfsClient } from "./gbfs"
 import { VelibRepository } from "./repository"
 
-export interface CollectionOptions {
-  readonly createRollups?: boolean
-}
-
 export interface CollectionResult {
   readonly liveUpdate: PersistSnapshotResult["liveUpdate"]
 }
@@ -32,10 +28,7 @@ const errorDetail = (error: AppError): string => {
   }
 }
 
-export const collectMinute = Effect.fn("collectMinute")(function*(
-  observedAt: number,
-  options: CollectionOptions = {}
-) {
+export const collectMinute = Effect.fn("collectMinute")(function*(observedAt: number) {
   const client = yield* GbfsClient
   const repository = yield* VelibRepository
   const startedAt = Date.now()
@@ -84,7 +77,7 @@ export const collectMinute = Effect.fn("collectMinute")(function*(
     const collectionStatus = persisted.status
     const liveUpdate = persisted.liveUpdate
 
-    if (options.createRollups !== false && observedAt % ROLLUP_SECONDS === 0) {
+    if (observedAt % ROLLUP_SECONDS === 0) {
       // Finalize one bucket late so a delayed prior Cron can persist its last minute.
       const recentBuckets = Array.from(
         { length: 12 },

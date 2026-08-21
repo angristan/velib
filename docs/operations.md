@@ -6,7 +6,7 @@ Remote commands mutate production. Confirm the active Cloudflare account and tar
 
 ## Production prerequisites
 
-Wrangler configuration declares the production D1 database, Durable Object migration, rate limiters, cron trigger, custom domain, Turnstile site key, static assets, and observability settings.
+Wrangler configuration declares the production D1 database, R2 rollup-object binding, Pipeline binding, Durable Object migration, rate limiters, cron trigger, custom domain, Turnstile site key, static assets, and observability settings.
 
 Two values must be stored as Worker secrets:
 
@@ -48,11 +48,31 @@ After deployment:
 
 1. Check <https://velib.stanislas.cloud/api/health> for a successful, recent collection.
 2. Open the interface and complete the Turnstile session flow.
-3. Verify the live map, one station detail, each history range, and one replay window.
+3. Verify the live map, one station detail, each populated history range, and one replay window.
 4. Confirm the WebSocket connects and a subsequent collection updates the interface.
 5. Query persisted Workers Logs and Traces for the deployed version.
 
-The collector runs every minute, so allow one collection interval before treating absent fresh data as a failure.
+The collector runs every minute, so allow one collection interval before treating absent fresh data as a failure. The `30d` and `1y` ranges initially contain only the retained D1 overlap; monthly R2 objects accumulate from completed UTC days.
+
+### Rollup archive checks
+
+The archive exporter is independent from collection. Inspect its bounded D1 state without modifying it:
+
+```sql
+SELECT
+  COUNT(*) AS pending,
+  SUM(CASE WHEN payload IS NULL THEN 1 ELSE 0 END) AS unprepared,
+  MIN(day_at) AS oldest_day,
+  MAX(attempts) AS max_attempts
+FROM station_rollup_archive_jobs;
+
+SELECT day_at, enqueued_at, completed_at
+FROM station_rollup_archive_days
+ORDER BY day_at DESC
+LIMIT 14;
+```
+
+Healthy steady state has no job older than one day. A current-day queue can remain non-empty for several hours because each Cron invocation deliberately prepares at most 25 jobs and writes at most eight objects. Investigate repeated `Rollup archive preparation failed`, `Rollup archive delivery failed`, or `Station rollup archive failed` events before attempting a backfill.
 
 ## Schema changes
 
@@ -116,4 +136,4 @@ After restoration, deploy a schema-compatible Worker if necessary and repeat the
 
 Workers Logs and Traces use full (`1.0`) head sampling. Before adding high-volume logging or custom spans, remove redundant per-query or per-item telemetry and check current Cloudflare usage and retention. Automatic Cloudflare spans already cover D1 and Durable Object binding calls.
 
-See [Development](development.md) for local setup and troubleshooting. See [Architecture](architecture.md) for runtime and storage design. See [Analytics archive](analytics.md) before enabling Pipelines or the R2 history backend.
+See [Development](development.md) for local setup and troubleshooting. See [Architecture](architecture.md) for runtime and storage design. See [Analytics archive](analytics.md) before changing Pipeline, rollup-object, or retention behavior.

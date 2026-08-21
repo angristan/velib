@@ -52,6 +52,13 @@ it("returns 503 when human verification is unavailable", async () => {
   })
 })
 
+it.effect("accepts month and year station history ranges", () =>
+  Effect.gen(function*() {
+    assert.strictEqual(yield* testExports.parseRange("30d"), "30d")
+    assert.strictEqual(yield* testExports.parseRange("1y"), "1y")
+  })
+)
+
 it("cancels a pending session body read when interrupted", async () => {
   let cancelled = false
   let resolveReading: (() => void) | undefined

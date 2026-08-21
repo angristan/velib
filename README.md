@@ -1,6 +1,6 @@
 # Vélib’ Pulse
 
-A map-first view of Vélib’ Métropole availability, live network changes, and seven days of station history.
+A map-first view of Vélib’ Métropole availability, live network changes, and one year of station history.
 
 [**Open Vélib’ Pulse →**](https://velib.stanislas.cloud)
 
@@ -21,7 +21,7 @@ Vélib’ Pulse is an independent, unofficial service. It is not affiliated with
 ## Highlights
 
 - Live mechanical bikes, electric bikes, and open docks across the network.
-- Search, filters, nearby stations, and seven days of station history.
+- Search, filters, nearby stations, and tiered station history up to one year.
 - Live WebSocket updates backed by authoritative D1 snapshots.
 - Archive playback and before-and-after network comparison.
 - Shareable views that preserve the map, filters, station, and archive time.

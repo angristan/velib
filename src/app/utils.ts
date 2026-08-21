@@ -1,6 +1,6 @@
 import type { AppLocale } from "./locale"
 import { localeTag } from "./locale"
-import type { Coordinates } from "./types"
+import type { Coordinates, HistoryRange } from "./types"
 
 const timeZone = "Europe/Paris"
 
@@ -44,13 +44,17 @@ export const formatTimestamp = (timestamp: number, locale: AppLocale = "fr"): st
 
 export const formatChartTime = (
   timestamp: number,
-  includeDay: boolean,
+  range: HistoryRange,
   locale: AppLocale = "fr",
-): string => timestamp
-  ? dateFormatter(locale, includeDay
-    ? { weekday: "short", hour: "2-digit", minute: "2-digit" }
-    : { hour: "2-digit", minute: "2-digit" }).format(timestamp)
-  : "—"
+): string => {
+  if (!timestamp) return "—"
+  const options: Intl.DateTimeFormatOptions = range === "1h" || range === "3h" || range === "1d"
+    ? { hour: "2-digit", minute: "2-digit" }
+    : range === "7d"
+      ? { weekday: "short", hour: "2-digit", minute: "2-digit" }
+      : { day: "numeric", month: "short", hour: "2-digit" }
+  return dateFormatter(locale, { ...options, timeZone }).format(timestamp)
+}
 
 export const formatArchiveTimestamp = (timestamp: number, locale: AppLocale = "fr"): string =>
   timestamp

@@ -53,6 +53,8 @@ export const HistoryChart = ({
     { value: "3h", label: copy.ranges.threeHours },
     { value: "1d", label: copy.ranges.day },
     { value: "7d", label: copy.ranges.week },
+    { value: "30d", label: copy.ranges.month },
+    { value: "1y", label: copy.ranges.year },
   ]
   const points = history?.points ?? []
   const mechanicalLabel = messages.common.mechanical
@@ -61,7 +63,7 @@ export const HistoryChart = ({
   const unavailableLabel = messages.common.unavailable
   const seriesOrder = [mechanicalLabel, electricLabel, docksLabel, unavailableLabel]
   const chartData = points.map((point) => ({
-    label: formatChartTime(point.at, range === "7d", locale),
+    label: formatChartTime(point.at, range, locale),
     timestamp: point.at,
     [mechanicalLabel]: Math.round(point.mechanical * 10) / 10,
     [electricLabel]: Math.round(point.electric * 10) / 10,

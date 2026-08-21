@@ -106,5 +106,5 @@ export const stationHistoryQueryOptions = (
     ? skipToken
     : ({ signal }) => fetchStationHistory(stationCode, range, signal),
   queryKey: velibQueryKeys.history(stationCode, range),
-  staleTime: 30_000,
+  staleTime: range === "30d" || range === "1y" ? 5 * MINUTE_MS : 30_000,
 })

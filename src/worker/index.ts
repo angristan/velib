@@ -16,55 +16,35 @@ import {
 import { GbfsClientLive } from "./gbfs"
 import { LiveFeed } from "./live-feed"
 import { makeVelibRepositoryLive } from "./repository"
+import { makeRollupArchiveLive, RollupArchive } from "./rollup-archive"
 import { handleRequest } from "./routes"
-import {
-  D1StationHistoryLive,
-  makeR2StationHistoryLive
-} from "./station-history"
+import { TieredStationHistoryLive } from "./station-history"
 import { type SessionCryptoError } from "./signing"
 
 export { LiveFeed }
 
 interface AnalyticsBindings {
-  readonly HISTORY_BACKEND?: string
   readonly OBSERVATIONS?: StationObservationPipeline
-  readonly R2_SQL_ACCOUNT_ID?: string
-  readonly R2_SQL_BUCKET?: string
-  readonly R2_SQL_TOKEN?: string
 }
 
 type RuntimeEnv = Omit<Env, keyof AnalyticsBindings> & AnalyticsBindings
 
-const r2HistoryReady = (env: RuntimeEnv): env is RuntimeEnv & {
-  readonly HISTORY_BACKEND: "r2"
-  readonly OBSERVATIONS: StationObservationPipeline
-  readonly R2_SQL_ACCOUNT_ID: string
-  readonly R2_SQL_BUCKET: string
-  readonly R2_SQL_TOKEN: string
-} =>
-  env.HISTORY_BACKEND === "r2" &&
-  env.OBSERVATIONS !== undefined &&
-  (env.R2_SQL_ACCOUNT_ID?.length ?? 0) > 0 &&
-  (env.R2_SQL_BUCKET?.length ?? 0) > 0 &&
-  (env.R2_SQL_TOKEN?.length ?? 0) > 0
-
 const makeRuntime = (env: RuntimeEnv) => {
   const repositoryLayer = makeVelibRepositoryLive(env.DB)
   const archiveOutboxLayer = makeArchiveOutboxStoreLive(env.DB)
-  const historyLayer = r2HistoryReady(env)
-    ? makeR2StationHistoryLive({
-        accountId: env.R2_SQL_ACCOUNT_ID,
-        bucket: env.R2_SQL_BUCKET,
-        token: env.R2_SQL_TOKEN
-      })
-    : D1StationHistoryLive
+  const rollupArchiveLayer = makeRollupArchiveLive(env.DB, env.HISTORY_ROLLUPS)
+  const historyLayer = Layer.provide(
+    TieredStationHistoryLive,
+    Layer.merge(repositoryLayer, rollupArchiveLayer)
+  )
 
   return ManagedRuntime.make(
     Layer.mergeAll(
       GbfsClientLive,
       repositoryLayer,
       archiveOutboxLayer,
-      Layer.provide(historyLayer, repositoryLayer),
+      rollupArchiveLayer,
+      historyLayer,
       makeAccessControlLive(env)
     )
   )
@@ -103,7 +83,10 @@ const cacheKeyFor = (request: Request, url: URL): string | null => {
   if (/^\/api\/stations\/[1-9]\d*\/history$/.test(url.pathname)) {
     if (!queryContainsOnly(url, new Set(["range"]))) return null
     const range = url.searchParams.get("range") ?? "1h"
-    if (range !== "1h" && range !== "3h" && range !== "1d" && range !== "7d") return null
+    if (
+      range !== "1h" && range !== "3h" && range !== "1d" &&
+      range !== "7d" && range !== "30d" && range !== "1y"
+    ) return null
     canonical.searchParams.set("range", range)
     return canonical.toString()
   }
@@ -201,6 +184,22 @@ const deliverArchives = async (
   }
 }
 
+const maintainRollupArchive = async (
+  runtime: AppRuntime,
+  now: number
+): Promise<void> => {
+  try {
+    const result = await runtime.runPromise(
+      Effect.flatMap(RollupArchive, (archive) => archive.maintain(now))
+    )
+    if (result.enqueuedDays > 0 || result.prepared > 0 || result.delivered > 0 || result.failed > 0) {
+      console.info("Station rollup archive maintained", result)
+    }
+  } catch (cause) {
+    console.error("Station rollup archive failed", { cause })
+  }
+}
+
 const worker: ExportedHandler<RuntimeEnv> = {
   async fetch(request, env, context) {
     const url = new URL(request.url)
@@ -239,9 +238,7 @@ const worker: ExportedHandler<RuntimeEnv> = {
 
   scheduled(controller, env, context) {
     const observedAt = Math.floor(controller.scheduledTime / 1000 / 60) * 60
-    const program = collectMinute(observedAt, {
-      createRollups: !r2HistoryReady(env)
-    }).pipe(
+    const program = collectMinute(observedAt).pipe(
       Effect.tapCause((cause) =>
         Effect.logError("Scheduled collection terminated", {
           observedAt,
@@ -279,7 +276,10 @@ const worker: ExportedHandler<RuntimeEnv> = {
       }
       await Promise.all(deliveries)
     })
-    context.waitUntil(ingestion)
+    context.waitUntil(Promise.all([
+      ingestion,
+      maintainRollupArchive(runtime, observedAt)
+    ]).then(() => undefined))
   }
 }
 

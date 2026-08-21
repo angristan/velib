@@ -24,9 +24,6 @@
   "vars": {
     "APP_ENV": "production",
     "APP_ORIGIN": "https://velib.stanislas.cloud",
-    "HISTORY_BACKEND": "d1",
-    "R2_SQL_ACCOUNT_ID": "47d71747660aab24284661867a77ed71",
-    "R2_SQL_BUCKET": "velib-analytics",
     "TURNSTILE_HOSTNAME": "velib.stanislas.cloud",
     "TURNSTILE_SITE_KEY": "0x4AAAAAAD6omDRMusYD6r0s",
     "SESSION_TTL": "30m"
@@ -61,6 +58,12 @@
     {
       "binding": "OBSERVATIONS",
       "stream": "909ed68a22f44126817dd8940fe4fda8"
+    }
+  ],
+  "r2_buckets": [
+    {
+      "binding": "HISTORY_ROLLUPS",
+      "bucket_name": "velib-analytics"
     }
   ],
   "durable_objects": {

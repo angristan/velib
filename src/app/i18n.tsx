@@ -14,7 +14,7 @@ const STORAGE_KEY = "velib:locale"
 const french = {
   document: {
     title: "Vélib’ Pulse — Disponibilités en direct",
-    description: "Disponibilité Vélib’ en direct et historique sur sept jours.",
+    description: "Disponibilité Vélib’ en direct et historique sur un an.",
   },
   common: {
     retry: "Réessayer",
@@ -97,7 +97,14 @@ const french = {
     close: "Fermer le détail",
   },
   history: {
-    ranges: { hour: "1 h", threeHours: "3 h", day: "24 h", week: "7 j" },
+    ranges: {
+      hour: "1 h",
+      threeHours: "3 h",
+      day: "24 h",
+      week: "7 j",
+      month: "30 j",
+      year: "1 an"
+    },
     eyebrow: "Évolution",
     title: "Disponibilité",
     period: "Période de l’historique",
@@ -250,7 +257,7 @@ export type Messages = DeepWiden<typeof french>
 const english: Messages = {
   document: {
     title: "Vélib’ Pulse — Live availability",
-    description: "Live Vélib’ availability and a seven-day history.",
+    description: "Live Vélib’ availability and one year of history.",
   },
   common: {
     retry: "Try again",
@@ -331,7 +338,14 @@ const english: Messages = {
     close: "Close details",
   },
   history: {
-    ranges: { hour: "1 hr", threeHours: "3 hrs", day: "24 hrs", week: "7 d" },
+    ranges: {
+      hour: "1 hr",
+      threeHours: "3 hrs",
+      day: "24 hrs",
+      week: "7 d",
+      month: "30 d",
+      year: "1 yr"
+    },
     eyebrow: "History",
     title: "Availability",
     period: "History period",
