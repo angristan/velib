@@ -308,8 +308,8 @@ it.effect("writes a station rollup with one JSON-backed D1 batch", () =>
   })
 )
 
-it.effect("runs cleanup without station lookup round trips", () => {
-  const observedAt = RETENTION_SECONDS + ROLLUP_SECONDS * 2
+it.effect("runs staggered cleanup without station lookup round trips", () => {
+  const observedAt = RETENTION_SECONDS + ROLLUP_SECONDS * 2 + 60
   const batches: Array<ReadonlyArray<FakeStatement>> = []
   const db = makeFakeDatabase({
     all: (sql) => {
@@ -335,13 +335,37 @@ it.effect("runs cleanup without station lookup round trips", () => {
     assert.include(rotatingCleanup.sql, "station_code IN")
     assert.include(rotatingCleanup.sql, "station_code % 300 = ?")
     assert.deepEqual(rotatingCleanup.values, [
-      Math.floor(observedAt / 60) % 300,
+      Math.floor(observedAt / ROLLUP_SECONDS) % 300,
       observedAt - RETENTION_SECONDS
     ])
     assert.include(bucketCleanup.sql, "station_code IN (SELECT station_code FROM stations)")
     assert.deepEqual(bucketCleanup.values, [
-      observedAt - ROLLUP_SECONDS - RETENTION_SECONDS
+      Math.floor(observedAt / ROLLUP_SECONDS) * ROLLUP_SECONDS -
+        ROLLUP_SECONDS - RETENTION_SECONDS
     ])
+  }).pipe(Effect.provide(makeVelibRepositoryLive(db)))
+})
+
+it.effect("skips repeated metadata freshness reads within the daily window", () => {
+  let reads = 0
+  const syncedAt = 1_800_000_000
+  const db = makeFakeDatabase({
+    first: (sql) => {
+      if (sql.includes("metadata_synced_at")) {
+        reads += 1
+        return { value: syncedAt }
+      }
+      throw new Error(`Unexpected query: ${sql}`)
+    }
+  })
+
+  return Effect.gen(function*() {
+    const repository = yield* VelibRepository
+    assert.isFalse(yield* repository.needsMetadata(syncedAt + 60))
+    assert.isFalse(yield* repository.needsMetadata(syncedAt + 3_600))
+    assert.strictEqual(reads, 1)
+    assert.isTrue(yield* repository.needsMetadata(syncedAt + 86_401))
+    assert.strictEqual(reads, 2)
   }).pipe(Effect.provide(makeVelibRepositoryLive(db)))
 })
 

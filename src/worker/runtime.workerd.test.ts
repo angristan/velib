@@ -94,7 +94,7 @@ describe("Worker runtime bindings", () => {
     await Effect.runPromise(
       Effect.gen(function*() {
         const repository = yield* VelibRepository
-        yield* repository.cleanup(bucketAt + RETENTION_SECONDS + ROLLUP_SECONDS)
+        yield* repository.cleanup(bucketAt + RETENTION_SECONDS + ROLLUP_SECONDS + 60)
       }).pipe(Effect.provide(makeVelibRepositoryLive(env.DB))),
     )
     const cleaned = await env.DB.prepare(

@@ -258,6 +258,7 @@ const metadataFromRow = (row: typeof MetadataRow.Type): StationMetadata =>
 const makeRepository = (db: D1Database): VelibRepository["Service"] => {
   let capacityCache: ReadonlyMap<number, number> | null = null
   let latestCache: SnapshotRecord | null = null
+  let metadataFreshUntil = 0
 
   const loadMetadata = Effect.fn("VelibRepository.loadMetadata")(function*() {
     const rows = yield* allRows(
@@ -384,6 +385,8 @@ const makeRepository = (db: D1Database): VelibRepository["Service"] => {
   })
 
   const needsMetadata = Effect.fn("VelibRepository.needsMetadata")(function*(now: number) {
+    if (now < metadataFreshUntil) return false
+
     const row = yield* firstRow(
       db.prepare("SELECT value FROM system_state WHERE key = 'metadata_synced_at'"),
       "needsMetadata"
@@ -392,7 +395,9 @@ const makeRepository = (db: D1Database): VelibRepository["Service"] => {
       return true
     }
     const state = yield* decodeRows(StateValueRow, row, "needsMetadata")
-    return state.value < now - 86_400
+    const needsRefresh = state.value < now - 86_400
+    if (!needsRefresh) metadataFreshUntil = state.value + 86_400
+    return needsRefresh
   })
 
   const syncMetadata = Effect.fn("VelibRepository.syncMetadata")(function*(
@@ -439,6 +444,7 @@ const makeRepository = (db: D1Database): VelibRepository["Service"] => {
       "syncMetadata.complete"
     )
     capacityCache = new Map(stations.map((station) => [station.stationCode, station.capacity]))
+    metadataFreshUntil = syncedAt + 86_400
   })
 
   const persistSnapshot = Effect.fn("VelibRepository.persistSnapshot")(function*(
@@ -822,8 +828,12 @@ const makeRepository = (db: D1Database): VelibRepository["Service"] => {
   })
 
   const cleanup = Effect.fn("VelibRepository.cleanup")(function*(observedAt: number) {
+    // Keep cleanup away from the expensive rollup slot and avoid seven D1
+    // delete statements on four out of every five collections.
+    if (observedAt % ROLLUP_SECONDS !== MINUTE_SECONDS) return
+
     const cutoff = observedAt - RETENTION_SECONDS
-    const cleanupSlot = Math.floor(observedAt / MINUTE_SECONDS) % 300
+    const cleanupSlot = Math.floor(observedAt / ROLLUP_SECONDS) % 300
     const statements: Array<D1PreparedStatement> = [
       db.prepare("DELETE FROM station_observation_outbox WHERE observed_at < ?").bind(cutoff),
       db.prepare("DELETE FROM minute_snapshots WHERE observed_at < ?").bind(cutoff),
@@ -839,16 +849,15 @@ const makeRepository = (db: D1Database): VelibRepository["Service"] => {
       ).bind(cleanupSlot, cutoff)
     ]
 
-    if (observedAt % ROLLUP_SECONDS === 0) {
-      const expiredBucket = observedAt - ROLLUP_SECONDS - RETENTION_SECONDS
-      statements.push(
-        db.prepare(
-          `DELETE FROM station_rollups_5m
-           WHERE station_code IN (SELECT station_code FROM stations)
-             AND bucket_at = ?`
-        ).bind(expiredBucket)
-      )
-    }
+    const currentBucket = Math.floor(observedAt / ROLLUP_SECONDS) * ROLLUP_SECONDS
+    const expiredBucket = currentBucket - ROLLUP_SECONDS - RETENTION_SECONDS
+    statements.push(
+      db.prepare(
+        `DELETE FROM station_rollups_5m
+         WHERE station_code IN (SELECT station_code FROM stations)
+           AND bucket_at = ?`
+      ).bind(expiredBucket)
+    )
     yield* runBatches(statements, "cleanup")
   })
 
