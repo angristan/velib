@@ -44,7 +44,9 @@ export const GbfsStatusStation = Schema.Struct({
 })
 
 export const GbfsStatusData = Schema.Struct({
-  stations: Schema.Array(GbfsStatusStation)
+  // Decode station rows independently so one transient upstream placeholder
+  // does not invalidate an otherwise complete network snapshot.
+  stations: Schema.Array(Schema.Unknown)
 })
 
 export const GbfsStatusFeed = Schema.Struct({

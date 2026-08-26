@@ -4,8 +4,8 @@ import { vi } from "vitest"
 
 import { GbfsClient, GbfsClientLive } from "./gbfs"
 
-const statusFeed = (station: Record<string, unknown>) => ({
-  data: { stations: [station] },
+const statusFeed = (...stations: Array<Record<string, unknown>>) => ({
+  data: { stations },
   lastUpdatedOther: 1_784_625_000,
   ttl: 60,
 })
@@ -80,6 +80,27 @@ it("normalizes validated station status in one collection", async () => {
       r: 1_784_624_980,
     }],
   })
+})
+
+it("skips an isolated upstream row without a station code", async () => {
+  const result = await runFetchStatus(statusFeed(
+    station({ stationCode: null, station_id: "placeholder" }),
+    station(),
+  ))
+
+  assert.deepEqual(result.stations.map(({ c }) => c), [2009])
+})
+
+it("rejects broadly malformed status feeds", async () => {
+  const error = await fetchStatusError(statusFeed(
+    ...Array.from({ length: 6 }, (_, index) => station({
+      stationCode: null,
+      station_id: `placeholder-${index}`,
+    })),
+  ))
+
+  assert.strictEqual(error._tag, "FeedError")
+  assert.strictEqual(error.operation, "decodeStatusStation")
 })
 
 it("reports out-of-domain station codes as FeedError", async () => {

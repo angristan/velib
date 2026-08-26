@@ -1,4 +1,4 @@
-import { Context, Effect, Layer, Schema } from "effect"
+import { Context, Effect, Layer, Option, Schema } from "effect"
 
 import {
   CollectedStatus,
@@ -6,6 +6,7 @@ import {
   FeedError,
   GbfsInformationFeed,
   GbfsStatusFeed,
+  GbfsStatusStation,
   StationMetadata
 } from "./domain"
 
@@ -13,6 +14,7 @@ const STATUS_URL =
   "https://velib-metropole-opendata.smovengo.cloud/opendata/Velib_Metropole/station_status.json"
 const INFORMATION_URL =
   "https://velib-metropole-opendata.smovengo.cloud/opendata/Velib_Metropole/station_information.json"
+const MAX_MALFORMED_STATUS_STATIONS = 5
 
 export interface CollectedMetadata {
   readonly sourceUpdatedAt: number
@@ -65,6 +67,8 @@ const decodeFeedValue = <S extends Schema.Top>(
   Effect.mapError((cause) => FeedError.make({ operation, detail: cause.message, cause })),
 )
 
+const decodeStatusStation = Schema.decodeUnknownOption(GbfsStatusStation)
+
 const parseStationCode = (value: string): number | null => {
   const parsed = Number(value)
   return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null
@@ -89,7 +93,14 @@ const fetchStatus = Effect.fn("GbfsClient.fetchStatus")(function*() {
   )
 
   const stationInputs: Array<unknown> = []
-  for (const station of feed.data.stations) {
+  let malformedStations = 0
+  for (const stationInput of feed.data.stations) {
+    const decoded = decodeStatusStation(stationInput)
+    if (Option.isNone(decoded)) {
+      malformedStations += 1
+      continue
+    }
+    const station = decoded.value
     const code = parseStationCode(station.stationCode)
     if (code === null) return yield* invalidStationCode(station.stationCode)
 
@@ -114,6 +125,23 @@ const fetchStatus = Effect.fn("GbfsClient.fetchStatus")(function*() {
       r: station.last_reported
     })
   }
+
+  if (
+    malformedStations > MAX_MALFORMED_STATUS_STATIONS ||
+    stationInputs.length === 0
+  ) {
+    return yield* FeedError.make({
+      operation: "decodeStatusStation",
+      detail: `The Vélib feed contained ${malformedStations} malformed station rows`
+    })
+  }
+  if (malformedStations > 0) {
+    yield* Effect.logWarning("Skipped malformed Vélib status rows", {
+      malformedStations,
+      stationCount: feed.data.stations.length
+    })
+  }
+
   const stations = yield* decodeFeedValue(
     Schema.Array(CompactStation),
     stationInputs,
