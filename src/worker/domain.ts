@@ -34,7 +34,9 @@ export const GbfsBikeType = Schema.Struct({
 
 export const GbfsStatusStation = Schema.Struct({
   station_id: StationIdentifier,
-  stationCode: Schema.String,
+  // The status feed occasionally omits this field for every station. The
+  // collector resolves those identities through the stricter information feed.
+  stationCode: Schema.NullOr(Schema.String),
   num_bikes_available_types: Schema.Array(GbfsBikeType),
   num_docks_available: NonNegativeCount,
   is_installed: GbfsFlag,

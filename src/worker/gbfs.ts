@@ -80,80 +80,6 @@ const invalidStationCode = (value: string): FeedError =>
     detail: `Invalid station code: ${value}`
   })
 
-const fetchStatus = Effect.fn("GbfsClient.fetchStatus")(function*() {
-  const input = yield* fetchJson(STATUS_URL, "fetchStatus")
-  const feed = yield* Schema.decodeUnknownEffect(GbfsStatusFeed)(input).pipe(
-    Effect.mapError((cause) =>
-      FeedError.make({
-        operation: "decodeStatus",
-        detail: cause.message,
-        cause
-      })
-    )
-  )
-
-  const stationInputs: Array<unknown> = []
-  let malformedStations = 0
-  for (const stationInput of feed.data.stations) {
-    const decoded = decodeStatusStation(stationInput)
-    if (Option.isNone(decoded)) {
-      malformedStations += 1
-      continue
-    }
-    const station = decoded.value
-    const code = parseStationCode(station.stationCode)
-    if (code === null) return yield* invalidStationCode(station.stationCode)
-
-    let mechanical = 0
-    let electric = 0
-    for (const available of station.num_bikes_available_types) {
-      if (available.mechanical !== undefined) mechanical += available.mechanical
-      if (available.ebike !== undefined) electric += available.ebike
-    }
-
-    const operative =
-      (station.is_installed === true || station.is_installed === 1) &&
-      (station.is_returning === true || station.is_returning === 1) &&
-      (station.is_renting === true || station.is_renting === 1)
-
-    stationInputs.push({
-      c: code,
-      m: mechanical,
-      e: electric,
-      d: station.num_docks_available,
-      o: operative ? 1 : 0,
-      r: station.last_reported
-    })
-  }
-
-  if (
-    malformedStations > MAX_MALFORMED_STATUS_STATIONS ||
-    stationInputs.length === 0
-  ) {
-    return yield* FeedError.make({
-      operation: "decodeStatusStation",
-      detail: `The Vélib feed contained ${malformedStations} malformed station rows`
-    })
-  }
-  if (malformedStations > 0) {
-    yield* Effect.logWarning("Skipped malformed Vélib status rows", {
-      malformedStations,
-      stationCount: feed.data.stations.length
-    })
-  }
-
-  const stations = yield* decodeFeedValue(
-    Schema.Array(CompactStation),
-    stationInputs,
-    "decodeStatusStation"
-  )
-
-  return {
-    sourceUpdatedAt: feed.lastUpdatedOther,
-    stations
-  }
-})
-
 const fetchInformation = Effect.fn("GbfsClient.fetchInformation")(function*() {
   const input = yield* fetchJson(INFORMATION_URL, "fetchInformation")
   const feed = yield* Schema.decodeUnknownEffect(GbfsInformationFeed)(input).pipe(
@@ -184,6 +110,139 @@ const fetchInformation = Effect.fn("GbfsClient.fetchInformation")(function*() {
     Schema.Array(StationMetadata),
     stationInputs,
     "decodeInformationStation"
+  )
+
+  return {
+    sourceUpdatedAt: feed.lastUpdatedOther,
+    stations
+  }
+})
+
+const fetchStatus = Effect.fn("GbfsClient.fetchStatus")(function*() {
+  const input = yield* fetchJson(STATUS_URL, "fetchStatus")
+  const feed = yield* Schema.decodeUnknownEffect(GbfsStatusFeed)(input).pipe(
+    Effect.mapError((cause) =>
+      FeedError.make({
+        operation: "decodeStatus",
+        detail: cause.message,
+        cause
+      })
+    )
+  )
+
+  const decodedStations: Array<typeof GbfsStatusStation.Type> = []
+  let malformedStations = 0
+  for (const stationInput of feed.data.stations) {
+    const decoded = decodeStatusStation(stationInput)
+    if (Option.isNone(decoded)) {
+      malformedStations += 1
+      continue
+    }
+    decodedStations.push(decoded.value)
+  }
+
+  if (
+    malformedStations > MAX_MALFORMED_STATUS_STATIONS ||
+    decodedStations.length === 0
+  ) {
+    return yield* FeedError.make({
+      operation: "decodeStatusStation",
+      detail: `The Vélib feed contained ${malformedStations} malformed station rows`
+    })
+  }
+
+  const missingStationCodes = decodedStations.filter(
+    ({ stationCode }) => stationCode === null
+  ).length
+  const authoritativeCodes = new Map<string, number>()
+  let informationSourceUpdatedAt: number | null = null
+  if (missingStationCodes > 0) {
+    const information = yield* fetchInformation()
+    informationSourceUpdatedAt = information.sourceUpdatedAt
+    for (const station of information.stations) {
+      if (authoritativeCodes.has(station.stationId)) {
+        return yield* FeedError.make({
+          operation: "resolveStatusStationCode",
+          detail: "The Vélib information feed contained duplicate station IDs"
+        })
+      }
+      authoritativeCodes.set(station.stationId, station.stationCode)
+    }
+
+    const unresolvedStationCodes = decodedStations.filter(
+      ({ stationCode, station_id }) =>
+        stationCode === null && !authoritativeCodes.has(String(station_id))
+    ).length
+    if (unresolvedStationCodes > 0) {
+      return yield* FeedError.make({
+        operation: "resolveStatusStationCode",
+        detail: `The Vélib information feed could not resolve ${unresolvedStationCodes} of ${missingStationCodes} station codes`
+      })
+    }
+  }
+
+  const stationInputs: Array<unknown> = []
+  const seenStationCodes = new Set<number>()
+  for (const station of decodedStations) {
+    const code = station.stationCode === null
+      ? authoritativeCodes.get(String(station.station_id))
+      : parseStationCode(station.stationCode)
+    if (code === null) return yield* invalidStationCode(station.stationCode ?? "null")
+    if (code === undefined) {
+      return yield* FeedError.make({
+        operation: "resolveStatusStationCode",
+        detail: "The Vélib information feed omitted a required station mapping"
+      })
+    }
+    if (seenStationCodes.has(code)) {
+      return yield* FeedError.make({
+        operation: "resolveStatusStationCode",
+        detail: "The Vélib status feed resolved duplicate station codes"
+      })
+    }
+    seenStationCodes.add(code)
+
+    let mechanical = 0
+    let electric = 0
+    for (const available of station.num_bikes_available_types) {
+      if (available.mechanical !== undefined) mechanical += available.mechanical
+      if (available.ebike !== undefined) electric += available.ebike
+    }
+
+    const operative =
+      (station.is_installed === true || station.is_installed === 1) &&
+      (station.is_returning === true || station.is_returning === 1) &&
+      (station.is_renting === true || station.is_renting === 1)
+
+    stationInputs.push({
+      c: code,
+      m: mechanical,
+      e: electric,
+      d: station.num_docks_available,
+      o: operative ? 1 : 0,
+      r: station.last_reported
+    })
+  }
+
+  if (missingStationCodes > 0) {
+    yield* Effect.logWarning("Recovered missing Vélib status station codes", {
+      missingStationCodes,
+      stationCount: feed.data.stations.length,
+      statusSourceUpdatedAt: feed.lastUpdatedOther,
+      informationSourceUpdatedAt
+    })
+  }
+  if (malformedStations > 0) {
+    yield* Effect.logWarning("Skipped malformed Vélib status rows", {
+      malformedStations,
+      stationCount: feed.data.stations.length
+    })
+  }
+
+  const stations = yield* decodeFeedValue(
+    Schema.Array(CompactStation),
+    stationInputs,
+    "decodeStatusStation"
   )
 
   return {
