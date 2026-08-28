@@ -34,11 +34,8 @@ export const collectMinute = Effect.fn("collectMinute")(function*(observedAt: nu
   const startedAt = Date.now()
 
   const collection = Effect.gen(function*() {
-    let phaseStartedAt = Date.now()
     const status = yield* client.fetchStatus()
-    const fetchStatusMs = Date.now() - phaseStartedAt
 
-    phaseStartedAt = Date.now()
     if (yield* repository.needsMetadata(observedAt)) {
       const metadata = yield* client.fetchInformation().pipe(
         Effect.catch((error) =>
@@ -61,9 +58,7 @@ export const collectMinute = Effect.fn("collectMinute")(function*(observedAt: nu
         })
       }
     }
-    const metadataMs = Date.now() - phaseStartedAt
 
-    phaseStartedAt = Date.now()
     const snapshot = CompactSnapshot.make({ v: 1, s: status.stations })
     const record: SnapshotRecord = {
       observedAt,
@@ -79,15 +74,11 @@ export const collectMinute = Effect.fn("collectMinute")(function*(observedAt: nu
         }).pipe(Effect.as(new Map<number, number>()))
       )
     )
-    const prepareSnapshotMs = Date.now() - phaseStartedAt
 
-    phaseStartedAt = Date.now()
     const persisted = yield* repository.persistSnapshot(record, encoded, capacities)
-    const persistSnapshotMs = Date.now() - phaseStartedAt
     const collectionStatus = persisted.status
     const liveUpdate = persisted.liveUpdate
 
-    phaseStartedAt = Date.now()
     if (observedAt % ROLLUP_SECONDS === 0) {
       // Finalize one bucket late so a delayed prior Cron can persist its last minute.
       const recentBuckets = Array.from(
@@ -96,26 +87,9 @@ export const collectMinute = Effect.fn("collectMinute")(function*(observedAt: nu
       )
       yield* repository.createRollups(recentBuckets)
     }
-    const createRollupsMs = Date.now() - phaseStartedAt
 
-    phaseStartedAt = Date.now()
     yield* repository.cleanup(observedAt)
-    const cleanupMs = Date.now() - phaseStartedAt
     const durationMs = Date.now() - startedAt
-
-    if (durationMs >= 2_000) {
-      yield* Effect.logWarning("Slow Vélib collection", {
-        observedAt,
-        durationMs,
-        fetchStatusMs,
-        metadataMs,
-        prepareSnapshotMs,
-        persistSnapshotMs,
-        createRollupsMs,
-        cleanupMs,
-        rollupSlot: observedAt % ROLLUP_SECONDS === 0
-      })
-    }
 
     const run: CollectionRecord = {
       observedAt,

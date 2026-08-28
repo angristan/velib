@@ -613,29 +613,6 @@ const makeRepository = (db: D1Database): VelibRepository["Service"] => {
     return responseEndSourceUpdatedAt === row.end_source_updated_at ? response : null
   })
 
-  const backfillReplayUpdates = Effect.fn("VelibRepository.backfillReplayUpdates")(function*(
-    frames: ReadonlyArray<LiveUpdateEvent>
-  ) {
-    if (frames.length === 0) return
-    const statements: Array<D1PreparedStatement> = []
-    for (const frame of frames) {
-      const payload = yield* stringify(frame, "serializeReplayBackfill")
-      statements.push(
-        db.prepare(
-          `INSERT OR IGNORE INTO minute_updates
-             (observed_at, previous_source_updated_at, source_updated_at, payload)
-           VALUES (?, ?, ?, ?)`
-        ).bind(
-          frame.observedAt,
-          frame.previousSourceUpdatedAt,
-          frame.sourceUpdatedAt,
-          payload
-        )
-      )
-    }
-    yield* runBatches(statements, "backfillReplayUpdates")
-  })
-
   const loadRollupInputs = Effect.fn("VelibRepository.loadRollupInputs")(function*(
     bucketAt: number
   ) {
@@ -1148,7 +1125,6 @@ const makeRepository = (db: D1Database): VelibRepository["Service"] => {
     if (response === null) {
       return yield* NotFoundError.make({ resource: "replay" })
     }
-    yield* backfillReplayUpdates(response.frames)
     yield* Effect.annotateCurrentSpan({
       minutes,
       frames: response.frames.length,
