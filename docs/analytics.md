@@ -68,7 +68,7 @@ Monitor pending/unprepared jobs, oldest job age, retries, object write conflicts
 
 At 1,519 stations, raw Pipeline input is about 16.7 GB/month, below the Workers Paid 50 GB transform and sink allowances. Hourly monthly objects are small; one-year direct-object history is expected to remain below the standard R2 storage allowance when it is available.
 
-D1 five-minute rollups remain enabled. This design optimizes serving latency and one-year retention, not Cron CPU. The latest Pipeline-shadow run rate was about 6.7 million Cron CPU-ms/month, below the account's 30 million included CPU-ms.
+D1 five-minute rollups remain enabled. This design optimizes serving latency and one-year retention, not Cron CPU. The measured Pipeline archive run rate was about 6.7 million Cron CPU-ms/month, below the account's 30 million included CPU-ms.
 
 ## Retention
 
