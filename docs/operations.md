@@ -6,7 +6,7 @@ Remote commands mutate production. Confirm the active Cloudflare account and tar
 
 ## Production prerequisites
 
-Wrangler configuration declares the production D1 database, R2 rollup-object binding, Pipeline binding, Durable Object migration, rate limiters, cron trigger, custom domain, Turnstile site key, static assets, and observability settings.
+Wrangler configuration declares the production D1 database, Durable Object migration, rate limiters, cron trigger, custom domain, Turnstile site key, static assets, and observability settings.
 
 Two values must be stored as Worker secrets:
 
@@ -52,11 +52,11 @@ After deployment:
 4. Confirm the WebSocket connects and a subsequent collection updates the interface.
 5. Query persisted Workers Logs and Traces for the deployed version.
 
-The collector runs every minute, so allow one collection interval before treating absent fresh data as a failure. The `30d` and `1y` ranges initially contain only the retained D1 overlap; monthly R2 objects accumulate from completed UTC days.
+The collector runs every minute, so allow one collection interval before treating absent fresh data as a failure. Monthly D1 archives are updated from completed UTC days.
 
 ### Rollup archive checks
 
-The archive exporter is independent from collection. Inspect its bounded D1 state without modifying it:
+The archive compactor is independent from collection. Inspect its bounded D1 state without modifying it:
 
 ```sql
 SELECT
@@ -72,7 +72,7 @@ ORDER BY day_at DESC
 LIMIT 14;
 ```
 
-Healthy steady state has no job older than one day. A current-day queue can remain non-empty for several hours because each Cron invocation deliberately prepares at most 25 jobs and writes at most eight objects. Investigate repeated `Rollup archive preparation failed`, `Rollup archive delivery failed`, or `Station rollup archive failed` events before attempting a backfill.
+Healthy steady state has no job older than one day. A current-day queue can remain non-empty for several hours because each Cron invocation prepares at most 25 jobs and writes at most eight monthly archive updates. Investigate repeated `Rollup archive preparation failed`, `Rollup archive delivery failed`, or `Station rollup archive failed` events.
 
 ## Schema changes
 

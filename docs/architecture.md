@@ -57,8 +57,9 @@ D1 is authoritative. The schema stores:
 - station metadata in `stations`;
 - the current network snapshot in `latest_status`;
 - compressed source observations in `minute_snapshots`;
-- per-station five-minute aggregates in `station_rollups_5m`;
-- network five-minute aggregates in `network_rollups_5m`; and
+- sharded, compressed station aggregates in `station_rollup_buckets_5m`;
+- network five-minute aggregates in `network_rollups_5m`;
+- monthly station archives in `station_history_archives`; and
 - collector outcomes in `collection_runs`.
 
 Minute snapshots and rollups retain seven days of local history. Exact-key cleanup handles the normal retention path; bounded recovery passes remove older rows left by interrupted collections.
@@ -67,11 +68,9 @@ The snapshot endpoint reads one compressed retained state for fast logarithmic t
 
 ### Analytics archive and one-year history
 
-The authoritative D1 snapshot transaction also queues immutable station-minute observations for a Pipeline-backed R2 Data Catalog Iceberg table. Scheduled work leases a bounded batch, retries Pipeline acceptance, and removes each claim only after success. Pipeline failure does not fail D1 collection. Raw Iceberg observations remain an offline repair and analysis source because direct R2 SQL latency is not suitable for interactive charts.
+A bounded D1 queue compacts completed station days from the sharded five-minute buckets. It stores one compressed row per station and UTC month in `station_history_archives`. D1 serves every history range. The `30d` response uses hourly archive points with the current five-minute tail; the `1y` response aggregates archive points to six-hour intervals.
 
-A second bounded D1 queue compacts completed station days from the existing five-minute rollups. It stores one-hour aggregates in one gzip R2 object per station and UTC month. D1 serves `1h`, `3h`, `1d`, and `7d`; direct R2 object reads serve `30d` and `1y`, with the retained D1 window overlaid as the authoritative current tail. One-year responses aggregate hourly objects to six-hour points.
-
-See [Analytics archive](analytics.md) for object format, durability, resource ownership, retention, and rollback.
+See [Analytics and history](analytics.md) for the data format, retention, and rollback limits.
 
 ### LiveFeed Durable Object
 
@@ -91,7 +90,7 @@ The Worker handles these routes:
 | `GET /api/snapshot?at=<unix-seconds>` | Compact retained network state at or before an archive point |
 | `GET /api/replay?minutes=15\|30\|60&at=<unix-seconds>` | Bounded network replay ending at the latest or a retained archive point |
 | `GET /api/stations/:code` | Current station details |
-| `GET /api/stations/:code/history?range=1h\|3h\|1d\|7d` | Station history |
+| `GET /api/stations/:code/history?range=1h\|3h\|1d\|7d\|30d\|1y` | Station history |
 
 `/api/health` and session bootstrap are public. Data routes require a valid signed session. Turnstile verification and authenticated API traffic use separate Workers Rate Limiting bindings.
 

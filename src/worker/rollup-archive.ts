@@ -70,28 +70,6 @@ const RollupBucketRow = Schema.Struct({
   payload: RollupBucketPayload
 })
 
-const RollupRow = Schema.Struct({
-  bucket_at: Schema.Number,
-  sample_count: Schema.Number,
-  mechanical_min: Schema.Number,
-  mechanical_max: Schema.Number,
-  mechanical_avg: Schema.Number,
-  mechanical_removed: Schema.Number,
-  mechanical_returned: Schema.Number,
-  electric_min: Schema.Number,
-  electric_max: Schema.Number,
-  electric_avg: Schema.Number,
-  electric_removed: Schema.Number,
-  electric_returned: Schema.Number,
-  docks_min: Schema.Number,
-  docks_max: Schema.Number,
-  docks_avg: Schema.Number,
-  unavailable_min: Schema.Number,
-  unavailable_max: Schema.Number,
-  unavailable_avg: Schema.Number,
-  operative_samples: Schema.Number
-})
-
 const ArchiveJobRow = Schema.Struct({
   day_at: Schema.Number,
   station_code: Schema.Number,
@@ -112,13 +90,6 @@ const HistoryArchiveRow = Schema.Struct({
   payload: ArchivePayload
 })
 
-const LegacyArchiveObjectRow = Schema.Struct({
-  station_code: Schema.Number,
-  month_at: Schema.Number,
-  complete_through: Schema.Number,
-  etag: Schema.String
-})
-
 export class RollupArchiveError extends Schema.TaggedErrorClass<RollupArchiveError>()(
   "RollupArchiveError",
   {
@@ -132,7 +103,6 @@ export interface RollupArchiveMaintenance {
   readonly enqueuedDays: number
   readonly prepared: number
   readonly delivered: number
-  readonly backfilled: number
   readonly failed: number
 }
 
@@ -142,7 +112,6 @@ export class RollupArchive extends Context.Service<RollupArchive, {
     options?: {
       readonly prepareLimit?: number
       readonly deliveryLimit?: number
-      readonly backfillLimit?: number
     }
   ) => Effect.Effect<RollupArchiveMaintenance, RollupArchiveError>
   readonly hourlyHistory: (
@@ -247,20 +216,6 @@ const gunzip = Effect.fn("RollupArchive.gunzip")(function*(
   })
 })
 
-const pointFromRow = (row: typeof RollupRow.Type): RollupHistoryPoint => ({
-  observedAt: row.bucket_at,
-  sampleCount: row.sample_count,
-  mechanical: Aggregate.make({ min: row.mechanical_min, max: row.mechanical_max, avg: row.mechanical_avg }),
-  mechanicalRemoved: row.mechanical_removed,
-  mechanicalReturned: row.mechanical_returned,
-  electric: Aggregate.make({ min: row.electric_min, max: row.electric_max, avg: row.electric_avg }),
-  electricRemoved: row.electric_removed,
-  electricReturned: row.electric_returned,
-  docks: Aggregate.make({ min: row.docks_min, max: row.docks_max, avg: row.docks_avg }),
-  unavailable: Aggregate.make({ min: row.unavailable_min, max: row.unavailable_max, avg: row.unavailable_avg }),
-  operativeSamples: row.operative_samples
-})
-
 const packPoint = (point: RollupHistoryPoint): typeof PackedRollup.Type => [
   point.observedAt,
   point.sampleCount,
@@ -355,9 +310,6 @@ export const utcMonthStart = (timestamp: number): number => {
   return Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), 1) / 1_000
 }
 
-export const rollupObjectKey = (stationCode: number, monthAt: number): string =>
-  `rollups/v1/stations/${stationCode}/${monthAt}.json.gz`
-
 const validatePackedPoints = (
   points: ReadonlyArray<typeof PackedRollup.Type>,
   from: number,
@@ -393,7 +345,7 @@ const monthStartsBetween = (from: number, to: number): Array<number> => {
 export const archiveRetryDelaySeconds = (attempts: number): number =>
   Math.min(15 * 60, 60 * 2 ** Math.min(Math.max(0, attempts - 1), 4))
 
-const makeRollupArchive = (db: D1Database, legacyBucket?: R2Bucket): RollupArchive["Service"] => {
+const makeRollupArchive = (db: D1Database): RollupArchive["Service"] => {
   const enqueueDay = Effect.fn("RollupArchive.enqueueDay")(function*(dayAt: number, now: number) {
     yield* runBatch(db, [
       db.prepare(
@@ -479,24 +431,6 @@ const makeRollupArchive = (db: D1Database, legacyBucket?: R2Bucket): RollupArchi
         "Source rollups expired before this archive job was prepared"
       ))
     }
-    const rows = yield* allRows(
-      db.prepare(
-        `SELECT bucket_at, sample_count,
-           mechanical_min, mechanical_max, mechanical_avg, mechanical_removed, mechanical_returned,
-           electric_min, electric_max, electric_avg, electric_removed, electric_returned,
-           docks_min, docks_max, docks_avg,
-           unavailable_min, unavailable_max, unavailable_avg, operative_samples
-         FROM station_rollups_5m
-         WHERE station_code = ? AND bucket_at >= ? AND bucket_at < ?
-         ORDER BY bucket_at`
-      ).bind(job.station_code, job.day_at, job.day_at + DAY_SECONDS),
-      "prepare.rollups"
-    )
-    const decoded = yield* decode(Schema.Array(RollupRow), rows, "prepare.rollups")
-    const points = new Map<number, RollupHistoryPoint>(decoded.map((row) => [
-      row.bucket_at,
-      pointFromRow(row)
-    ]))
     const bucketRows = yield* allRows(
       db.prepare(
         `SELECT bucket_at, shard, payload
@@ -515,6 +449,7 @@ const makeRollupArchive = (db: D1Database, legacyBucket?: R2Bucket): RollupArchi
       bucketRows,
       "prepare.rollupBuckets"
     )
+    const points: RollupHistoryPoint[] = []
     for (const row of buckets) {
       const bucket = yield* decodeRollupBucket(row.payload).pipe(
         Effect.mapError((cause) => archiveError(
@@ -533,16 +468,13 @@ const makeRollupArchive = (db: D1Database, legacyBucket?: R2Bucket): RollupArchi
         ))
       }
       const point = stationPointFromBucket(bucket, job.station_code)
-      if (point !== null) points.set(point.observedAt, point)
+      if (point !== null) points.push(point)
     }
     const block = DailyRollupBlock.make({
       v: 1,
       stationCode: job.station_code,
       dayAt: job.day_at,
-      hourly: aggregateRollupPoints(
-        [...points.values()].sort((left, right) => left.observedAt - right.observedAt),
-        HOUR_SECONDS
-      ).map(packPoint)
+      hourly: aggregateRollupPoints(points, HOUR_SECONDS).map(packPoint)
     })
     const payload = yield* stringify(block, "prepare.payload")
     yield* runStatement(
@@ -613,33 +545,11 @@ const makeRollupArchive = (db: D1Database, legacyBucket?: R2Bucket): RollupArchi
     return monthly
   })
 
-  const loadLegacyMonthlyObject = Effect.fn("RollupArchive.loadLegacyMonthlyObject")(function*(
-    stationCode: number,
-    monthAt: number
-  ) {
-    if (legacyBucket === undefined) return null
-    const object = yield* Effect.tryPromise({
-      try: () => legacyBucket.get(rollupObjectKey(stationCode, monthAt)),
-      catch: (cause) => archiveError("legacy.get", "Could not read legacy R2 rollup", cause)
-    })
-    if (object === null) return null
-    const payload = yield* Effect.tryPromise({
-      try: () => object.arrayBuffer(),
-      catch: (cause) => archiveError("legacy.read", "Could not read legacy R2 rollup body", cause)
-    })
-    const monthly = yield* decodeMonthlyPayload(payload, stationCode, monthAt, "legacy")
-    return { monthly, etag: object.etag, payload }
-  })
-
   const buildMonthlyArchive = Effect.fn("RollupArchive.buildMonthlyArchive")(function*(
     block: typeof DailyRollupBlock.Type
   ) {
     const monthAt = utcMonthStart(block.dayAt)
-    const stored = yield* loadMonthlyArchive(block.stationCode, monthAt)
-    const legacy = stored === null
-      ? yield* loadLegacyMonthlyObject(block.stationCode, monthAt)
-      : null
-    const current = stored ?? legacy?.monthly ?? null
+    const current = yield* loadMonthlyArchive(block.stationCode, monthAt)
     const from = block.dayAt
     const to = from + DAY_SECONDS
     const hourly = [
@@ -768,92 +678,16 @@ const makeRollupArchive = (db: D1Database, legacyBucket?: R2Bucket): RollupArchi
     return { delivered, failed }
   })
 
-  const backfillLegacyArchives = Effect.fn("RollupArchive.backfillLegacyArchives")(function*(
-    now: number,
-    limit: number
-  ) {
-    if (legacyBucket === undefined || limit === 0) return { backfilled: 0, failed: 0 }
-    const rows = yield* allRows(
-      db.prepare(
-        `SELECT legacy.station_code, legacy.month_at, legacy.complete_through, legacy.etag
-         FROM station_rollup_archive_objects AS legacy
-         LEFT JOIN station_history_archives AS history
-           ON history.station_code = legacy.station_code
-          AND history.month_at = legacy.month_at
-         WHERE history.station_code IS NULL
-         ORDER BY legacy.month_at, legacy.station_code
-         LIMIT ?`
-      ).bind(limit),
-      "backfill.discover"
-    )
-    const manifests = yield* decode(
-      Schema.Array(LegacyArchiveObjectRow),
-      rows,
-      "backfill.discover"
-    )
-    const outcomes = yield* Effect.forEach(
-      manifests,
-      (manifest) => Effect.gen(function*() {
-        const loaded = yield* loadLegacyMonthlyObject(manifest.station_code, manifest.month_at)
-        if (loaded === null) {
-          return yield* Effect.fail(archiveError(
-            "backfill.missing",
-            "Legacy R2 rollup is missing"
-          ))
-        }
-        if (
-          loaded.etag !== manifest.etag ||
-          loaded.monthly.completeThrough < manifest.complete_through
-        ) {
-          return yield* Effect.fail(archiveError(
-            "backfill.stale",
-            "Legacy R2 rollup does not match its D1 manifest"
-          ))
-        }
-        yield* runStatement(
-          db.prepare(
-            `INSERT INTO station_history_archives
-               (station_code, month_at, complete_through, payload, updated_at)
-             VALUES (?, ?, ?, ?, ?)
-             ON CONFLICT(station_code, month_at) DO NOTHING`
-          ).bind(
-            manifest.station_code,
-            manifest.month_at,
-            loaded.monthly.completeThrough,
-            loaded.payload,
-            now
-          ),
-          "backfill.save"
-        )
-      }).pipe(
-        Effect.as(true),
-        Effect.catch((error) => Effect.logError("Legacy rollup backfill failed", {
-          stationCode: manifest.station_code,
-          monthAt: manifest.month_at,
-          operation: error.operation,
-          detail: error.detail
-        }).pipe(Effect.as(false)))
-      ),
-      { concurrency: 4 }
-    )
-    return {
-      backfilled: outcomes.filter(Boolean).length,
-      failed: outcomes.filter((outcome) => !outcome).length
-    }
-  })
-
   const maintain = Effect.fn("RollupArchive.maintain")(function*(
     now: number,
     options: {
       readonly prepareLimit?: number
       readonly deliveryLimit?: number
-      readonly backfillLimit?: number
     } = {}
   ) {
     const enqueuedDays = yield* enqueueRecentDays(now)
     const preparation = yield* prepareJobs(now, options.prepareLimit ?? 25)
     const delivery = yield* deliverJobs(now, options.deliveryLimit ?? 8)
-    const backfill = yield* backfillLegacyArchives(now, options.backfillLimit ?? 400)
     if (now % DAY_SECONDS === 15 * 60) {
       yield* runStatement(
         db.prepare("DELETE FROM station_history_archives WHERE month_at < ?").bind(
@@ -866,8 +700,7 @@ const makeRollupArchive = (db: D1Database, legacyBucket?: R2Bucket): RollupArchi
       enqueuedDays,
       prepared: preparation.prepared,
       delivered: delivery.delivered,
-      backfilled: backfill.backfilled,
-      failed: preparation.failed + delivery.failed + backfill.failed
+      failed: preparation.failed + delivery.failed
     }
   })
 
@@ -881,11 +714,7 @@ const makeRollupArchive = (db: D1Database, legacyBucket?: R2Bucket): RollupArchi
     const requestedMonths = monthStartsBetween(from, now)
     const objects = yield* Effect.forEach(
       requestedMonths,
-      (monthAt) => Effect.gen(function*() {
-        const stored = yield* loadMonthlyArchive(stationCode, monthAt)
-        if (stored !== null) return stored
-        return (yield* loadLegacyMonthlyObject(stationCode, monthAt))?.monthly ?? null
-      }),
+      (monthAt) => loadMonthlyArchive(stationCode, monthAt),
       { concurrency: 4 }
     )
     const points = objects.flatMap((monthly) => monthly?.hourly.map(unpackPoint) ?? [])
@@ -899,5 +728,5 @@ const makeRollupArchive = (db: D1Database, legacyBucket?: R2Bucket): RollupArchi
   return { maintain, hourlyHistory }
 }
 
-export const makeRollupArchiveLive = (db: D1Database, legacyBucket?: R2Bucket) =>
-  Layer.succeed(RollupArchive, makeRollupArchive(db, legacyBucket))
+export const makeRollupArchiveLive = (db: D1Database) =>
+  Layer.succeed(RollupArchive, makeRollupArchive(db))

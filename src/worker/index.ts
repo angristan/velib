@@ -145,7 +145,7 @@ const maintainRollupArchive = async (
     )
     if (
       result.enqueuedDays > 0 || result.prepared > 0 || result.delivered > 0 ||
-      result.backfilled > 0 || result.failed > 0
+      result.failed > 0
     ) {
       console.info("Station rollup archive maintained", result)
     }

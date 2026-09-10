@@ -22,9 +22,9 @@ D1 five-minute data wins for overlapping timestamps. This keeps current data fre
 
 ## Packed five-minute buckets
 
-Migration `0007_station_history_archives.sql` adds `station_rollup_buckets_5m`. Each five-minute collection writes at most 16 gzip-compressed shard rows instead of one `station_rollups_5m` row per station. A station always maps to the same shard, so a history request reads only that shard.
+Migration `0007_station_history_archives.sql` adds `station_rollup_buckets_5m`. Each five-minute collection writes at most 16 gzip-compressed shard rows instead of one row per station. A station always maps to the same shard, so a history request reads only that shard.
 
-The Worker reads both formats during the seven-day transition. Existing `station_rollups_5m` rows expire through the normal cleanup path. New collections write only the packed format.
+Migration `0008_drop_legacy_analytics.sql` removes the old per-station rollups, observation outbox, and R2 archive manifests. The `3h`, `1d`, and `7d` ranges contain only packed data collected after the D1-only rollout, so the longer recent ranges refill over seven days.
 
 At 1,519 stations, this changes the main history path from about 437,000 station-row writes per day to at most 4,608 shard-row writes per day. Network rollups, completion markers, snapshots, and collection metadata remain separate D1 writes.
 
@@ -35,7 +35,7 @@ At 1,519 stations, this changes the main history path from about 437,000 station
 The existing durable job tables still protect daily generation:
 
 1. The Worker reconciles the six most recent completed UTC days.
-2. A job reads that station's packed or legacy five-minute points for one day.
+2. A job reads that station's packed five-minute points for one day.
 3. It aggregates the points to one-hour resolution and stores the prepared payload in D1.
 4. It replaces that day in the station's monthly D1 archive.
 5. It deletes the job only after the archive row is committed.
@@ -44,14 +44,10 @@ Preparation and delivery use bounded retries. Replacing one day is idempotent. A
 
 At 00:15 UTC, the Worker removes archive months older than the month containing the one-year cutoff. Keeping the cutoff month prevents a gap at the start of the `1y` range.
 
-## Retained R2 resources
+## Removed legacy storage
 
-The existing `velib-analytics` bucket, Data Catalog table, Pipeline resources, and stored data remain in `cloudflare-tf`. The application does not delete or mutate them.
-
-The rollout copied and validated every existing monthly rollup into `station_history_archives` before removing the `HISTORY_ROLLUPS` binding. Infrastructure and data deletion require a separate reviewed operation.
-
-Do not add a generic lifecycle rule to `velib-analytics`. The bucket contains Iceberg data and metadata; direct object expiry can corrupt the table.
+The rollout copied and validated every monthly R2 rollup into `station_history_archives`. The Pipeline, Data Catalog, R2 bucket, stored R2 data, observation outbox, R2 archive manifests, and per-station five-minute table have since been removed.
 
 ## Rollback
 
-A code rollback can read the retained R2 rollups and existing legacy D1 rows. Do not delete packed buckets, D1 archives, R2 objects, or archive manifests as part of rollback.
+Migration `0008_drop_legacy_analytics.sql` is a contract migration. Worker versions that query the removed tables cannot run after it is applied. Roll back only to a version that uses packed buckets and D1 monthly archives.

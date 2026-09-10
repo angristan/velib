@@ -299,7 +299,7 @@ it.effect("writes a station rollup with one compressed D1 row", () =>
   })
 )
 
-it.effect("runs staggered cleanup without station lookup round trips", () => {
+it.effect("cleans retained D1 data without station lookup round trips", () => {
   const observedAt = RETENTION_SECONDS + ROLLUP_SECONDS * 2 + 60
   const batches: Array<ReadonlyArray<FakeStatement>> = []
   const db = makeFakeDatabase({
@@ -316,24 +316,10 @@ it.effect("runs staggered cleanup without station lookup round trips", () => {
     yield* repository.cleanup(observedAt)
 
     assert.strictEqual(batches.length, 1)
-    assert.strictEqual(batches[0]?.length, 8)
+    assert.strictEqual(batches[0]?.length, 6)
     assert.include(batches[0]?.[1]?.sql ?? "", "DELETE FROM minute_updates")
     assert.include(batches[0]?.[5]?.sql ?? "", "DELETE FROM station_rollup_buckets_5m")
-    const rotatingCleanup = batches[0]?.[6]
-    const bucketCleanup = batches[0]?.[7]
-    assert.isDefined(rotatingCleanup)
-    assert.isDefined(bucketCleanup)
-    assert.include(rotatingCleanup.sql, "station_code IN")
-    assert.include(rotatingCleanup.sql, "station_code % 300 = ?")
-    assert.deepEqual(rotatingCleanup.values, [
-      Math.floor(observedAt / ROLLUP_SECONDS) % 300,
-      observedAt - RETENTION_SECONDS
-    ])
-    assert.include(bucketCleanup.sql, "station_code IN (SELECT station_code FROM stations)")
-    assert.deepEqual(bucketCleanup.values, [
-      Math.floor(observedAt / ROLLUP_SECONDS) * ROLLUP_SECONDS -
-        ROLLUP_SECONDS - RETENTION_SECONDS
-    ])
+    assert.deepEqual(batches[0]?.[5]?.values, [observedAt - RETENTION_SECONDS])
   }).pipe(Effect.provide(makeVelibRepositoryLive(db)))
 })
 

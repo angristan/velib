@@ -5,7 +5,6 @@ import {
   aggregateRollupPoints,
   archiveRetryDelaySeconds,
   HOUR_SECONDS,
-  rollupObjectKey,
   SIX_HOURS_SECONDS,
   utcDayStart,
   utcMonthStart
@@ -58,15 +57,11 @@ it("bounds one year of hourly points to six-hour chart points", () => {
   assert.strictEqual(result.reduce((sum, value) => sum + value.sampleCount, 0), 365 * 24 * 12)
 })
 
-it("uses stable UTC day, month, and object keys", () => {
+it("uses stable UTC day and month boundaries", () => {
   const timestamp = Date.UTC(2028, 1, 29, 23, 45) / 1_000
 
   assert.strictEqual(utcDayStart(timestamp), Date.UTC(2028, 1, 29) / 1_000)
   assert.strictEqual(utcMonthStart(timestamp), Date.UTC(2028, 1, 1) / 1_000)
-  assert.strictEqual(
-    rollupObjectKey(2009, Date.UTC(2028, 1, 1) / 1_000),
-    `rollups/v1/stations/2009/${Date.UTC(2028, 1, 1) / 1_000}.json.gz`
-  )
 })
 
 it("caps archive retry backoff at fifteen minutes", () => {

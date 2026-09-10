@@ -6,7 +6,6 @@ import {
   type EncodedSnapshot
 } from "./codec"
 import {
-  Aggregate,
   CollectionRecord,
   CollectionStatus,
   CompactSnapshot,
@@ -95,28 +94,6 @@ const RollupBucketRow = Schema.Struct({
   bucket_at: Schema.Number,
   shard: Schema.Number,
   payload: SnapshotPayload
-})
-
-const RollupRow = Schema.Struct({
-  bucket_at: Schema.Number,
-  sample_count: Schema.Number,
-  mechanical_min: Schema.Number,
-  mechanical_max: Schema.Number,
-  mechanical_avg: Schema.Number,
-  mechanical_removed: Schema.Number,
-  mechanical_returned: Schema.Number,
-  electric_min: Schema.Number,
-  electric_max: Schema.Number,
-  electric_avg: Schema.Number,
-  electric_removed: Schema.Number,
-  electric_returned: Schema.Number,
-  docks_min: Schema.Number,
-  docks_max: Schema.Number,
-  docks_avg: Schema.Number,
-  unavailable_min: Schema.Number,
-  unavailable_max: Schema.Number,
-  unavailable_avg: Schema.Number,
-  operative_samples: Schema.Number
 })
 
 const RunStatus = Schema.Literals(["ok", "stale", "error"])
@@ -737,32 +714,14 @@ const makeRepository = (db: D1Database): VelibRepository["Service"] => {
     if (observedAt % ROLLUP_SECONDS !== MINUTE_SECONDS) return
 
     const cutoff = observedAt - RETENTION_SECONDS
-    const cleanupSlot = Math.floor(observedAt / ROLLUP_SECONDS) % 300
-    const statements: Array<D1PreparedStatement> = [
+    yield* runBatches([
       db.prepare("DELETE FROM minute_snapshots WHERE observed_at < ?").bind(cutoff),
       db.prepare("DELETE FROM minute_updates WHERE observed_at < ?").bind(cutoff),
       db.prepare("DELETE FROM collection_runs WHERE observed_at < ?").bind(cutoff),
       db.prepare("DELETE FROM network_rollups_5m WHERE bucket_at < ?").bind(cutoff),
       db.prepare("DELETE FROM completed_rollups WHERE bucket_at < ?").bind(cutoff),
-      db.prepare("DELETE FROM station_rollup_buckets_5m WHERE bucket_at < ?").bind(cutoff),
-      db.prepare(
-        `DELETE FROM station_rollups_5m
-         WHERE station_code IN (
-           SELECT station_code FROM stations WHERE station_code % 300 = ?
-         ) AND bucket_at < ?`
-      ).bind(cleanupSlot, cutoff)
-    ]
-
-    const currentBucket = Math.floor(observedAt / ROLLUP_SECONDS) * ROLLUP_SECONDS
-    const expiredBucket = currentBucket - ROLLUP_SECONDS - RETENTION_SECONDS
-    statements.push(
-      db.prepare(
-        `DELETE FROM station_rollups_5m
-         WHERE station_code IN (SELECT station_code FROM stations)
-           AND bucket_at = ?`
-      ).bind(expiredBucket)
-    )
-    yield* runBatches(statements, "cleanup")
+      db.prepare("DELETE FROM station_rollup_buckets_5m WHERE bucket_at < ?").bind(cutoff)
+    ], "cleanup")
   })
 
   const recordCollection = Effect.fn("VelibRepository.recordCollection")(function*(record: CollectionRecord) {
@@ -937,33 +896,6 @@ const makeRepository = (db: D1Database): VelibRepository["Service"] => {
     }
 
     const rangeSeconds = range === "3h" ? 3 * 60 * 60 : range === "1d" ? 24 * 60 * 60 : RETENTION_SECONDS
-    const rows = yield* allRows(
-      db.prepare(
-        `SELECT bucket_at, sample_count,
-           mechanical_min, mechanical_max, mechanical_avg, mechanical_removed, mechanical_returned,
-           electric_min, electric_max, electric_avg, electric_removed, electric_returned,
-           docks_min, docks_max, docks_avg,
-           unavailable_min, unavailable_max, unavailable_avg, operative_samples
-         FROM station_rollups_5m
-         WHERE station_code = ? AND bucket_at >= ?
-         ORDER BY bucket_at`
-      ).bind(code, now - rangeSeconds),
-      "history.rollups"
-    )
-    const decoded = yield* decodeRows(Schema.Array(RollupRow), rows, "history.rollups")
-    const points = new Map<number, RollupHistoryPoint>(decoded.map((row) => [row.bucket_at, {
-      observedAt: row.bucket_at,
-      sampleCount: row.sample_count,
-      mechanical: Aggregate.make({ min: row.mechanical_min, max: row.mechanical_max, avg: row.mechanical_avg }),
-      mechanicalRemoved: row.mechanical_removed,
-      mechanicalReturned: row.mechanical_returned,
-      electric: Aggregate.make({ min: row.electric_min, max: row.electric_max, avg: row.electric_avg }),
-      electricRemoved: row.electric_removed,
-      electricReturned: row.electric_returned,
-      docks: Aggregate.make({ min: row.docks_min, max: row.docks_max, avg: row.docks_avg }),
-      unavailable: Aggregate.make({ min: row.unavailable_min, max: row.unavailable_max, avg: row.unavailable_avg }),
-      operativeSamples: row.operative_samples
-    }]))
     const bucketRows = yield* allRows(
       db.prepare(
         `SELECT bucket_at, shard, payload
@@ -978,6 +910,7 @@ const makeRepository = (db: D1Database): VelibRepository["Service"] => {
       bucketRows,
       "history.rollupBuckets"
     )
+    const points: RollupHistoryPoint[] = []
     for (const row of decodedBuckets) {
       const bucket = yield* decodeRollupBucket(row.payload).pipe(
         Effect.mapError((cause) => decodeError("history.rollupBucket", cause))
@@ -989,14 +922,14 @@ const makeRepository = (db: D1Database): VelibRepository["Service"] => {
         ))
       }
       const point = stationPointFromBucket(bucket, code)
-      if (point !== null) points.set(point.observedAt, point)
+      if (point !== null) points.push(point)
     }
 
     return {
       station: metadata,
       range,
       resolutionSeconds: ROLLUP_SECONDS,
-      points: [...points.values()].sort((left, right) => left.observedAt - right.observedAt)
+      points
     }
   })
 

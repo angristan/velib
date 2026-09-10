@@ -29,10 +29,11 @@ describe("Worker runtime bindings", () => {
     expect(tables.results.map(({ name }) => name)).toContain("stations")
     expect(tables.results.map(({ name }) => name)).toContain("minute_snapshots")
     expect(tables.results.map(({ name }) => name)).toContain("minute_updates")
-    expect(tables.results.map(({ name }) => name)).toContain("station_observation_outbox")
+    expect(tables.results.map(({ name }) => name)).not.toContain("station_observation_outbox")
     expect(tables.results.map(({ name }) => name)).toContain("station_rollup_archive_days")
     expect(tables.results.map(({ name }) => name)).toContain("station_rollup_archive_jobs")
-    expect(tables.results.map(({ name }) => name)).toContain("station_rollup_archive_objects")
+    expect(tables.results.map(({ name }) => name)).not.toContain("station_rollup_archive_objects")
+    expect(tables.results.map(({ name }) => name)).not.toContain("station_rollups_5m")
     expect(tables.results.map(({ name }) => name)).toContain("station_rollup_buckets_5m")
     expect(tables.results.map(({ name }) => name)).toContain("station_history_archives")
   })
@@ -77,15 +78,11 @@ describe("Worker runtime bindings", () => {
     const packed = await env.DB.prepare(
       "SELECT length(payload) AS payload_size FROM station_rollup_buckets_5m WHERE bucket_at = ?",
     ).bind(bucketAt).first<{ payload_size: number }>()
-    const legacy = await env.DB.prepare(
-      "SELECT 1 FROM station_rollups_5m WHERE station_code = ? AND bucket_at = ?",
-    ).bind(stationCode, bucketAt).first()
     const completion = await env.DB.prepare(
       "SELECT sample_count FROM completed_rollups WHERE bucket_at = ?",
     ).bind(bucketAt).first<{ sample_count: number }>()
 
     expect(packed?.payload_size).toBeGreaterThan(0)
-    expect(legacy).toBeNull()
     expect(history.points).toHaveLength(1)
     expect(history.points[0]).toMatchObject({
       observedAt: bucketAt,
@@ -169,7 +166,6 @@ describe("Worker runtime bindings", () => {
 
     expect(result.maintenance.prepared).toBe(1)
     expect(result.maintenance.delivered).toBe(1)
-    expect(result.maintenance.backfilled).toBe(0)
     expect(result.maintenance.failed).toBe(0)
     expect(result.history).toHaveLength(1)
     expect(result.history[0]?.sampleCount).toBe(60)
