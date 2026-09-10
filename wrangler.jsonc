@@ -54,18 +54,6 @@
       "migrations_dir": "migrations"
     }
   ],
-  "pipelines": [
-    {
-      "binding": "OBSERVATIONS",
-      "stream": "909ed68a22f44126817dd8940fe4fda8"
-    }
-  ],
-  "r2_buckets": [
-    {
-      "binding": "HISTORY_ROLLUPS",
-      "bucket_name": "velib-analytics"
-    }
-  ],
   "durable_objects": {
     "bindings": [
       {

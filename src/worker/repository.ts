@@ -37,6 +37,12 @@ import {
 import { deriveLiveUpdate } from "./live-update"
 import { deriveReplay, deriveReplayFromUpdates } from "./replay"
 import { deriveRollups } from "./rollup"
+import {
+  decodeRollupBucket,
+  encodeRollupBucket,
+  rollupBucketShard,
+  stationPointFromBucket
+} from "./rollup-bucket"
 
 const MetadataRow = Schema.Struct({
   station_code: Schema.Number,
@@ -48,10 +54,6 @@ const MetadataRow = Schema.Struct({
   metadata_updated_at: Schema.Number
 })
 
-const CapacityRow = Schema.Struct({
-  station_code: Schema.Number,
-  capacity: Schema.Number
-})
 const StateValueRow = Schema.Struct({ value: Schema.Number })
 const CompletionRow = Schema.Struct({ sample_count: Schema.Number })
 
@@ -87,6 +89,12 @@ const ReplayUpdateRow = Schema.Struct({
   previous_source_updated_at: Schema.Number,
   source_updated_at: Schema.Number,
   payload: Schema.String
+})
+
+const RollupBucketRow = Schema.Struct({
+  bucket_at: Schema.Number,
+  shard: Schema.Number,
+  payload: SnapshotPayload
 })
 
 const RollupRow = Schema.Struct({
@@ -135,11 +143,9 @@ export class VelibRepository extends Context.Service<VelibRepository, {
     stations: ReadonlyArray<StationMetadata>,
     syncedAt: number
   ) => Effect.Effect<void, RepositoryError>
-  readonly capacities: () => Effect.Effect<ReadonlyMap<number, number>, RepositoryError>
   readonly persistSnapshot: (
     record: SnapshotRecord,
-    encoded: EncodedSnapshot,
-    capacities?: ReadonlyMap<number, number>
+    encoded: EncodedSnapshot
   ) => Effect.Effect<PersistSnapshotResult, RepositoryError>
   readonly createRollups: (
     bucketAts: ReadonlyArray<number>
@@ -256,7 +262,6 @@ const metadataFromRow = (row: typeof MetadataRow.Type): StationMetadata =>
   })
 
 const makeRepository = (db: D1Database): VelibRepository["Service"] => {
-  let capacityCache: ReadonlyMap<number, number> | null = null
   let latestCache: SnapshotRecord | null = null
   let metadataFreshUntil = 0
 
@@ -269,18 +274,6 @@ const makeRepository = (db: D1Database): VelibRepository["Service"] => {
     )
     const decoded = yield* decodeRows(Schema.Array(MetadataRow), rows, "loadMetadata")
     return decoded.map(metadataFromRow)
-  })
-
-  const loadCapacities = Effect.fn("VelibRepository.loadCapacities")(function*() {
-    if (capacityCache !== null) return capacityCache
-
-    const rows = yield* allRows(
-      db.prepare("SELECT station_code, capacity FROM stations ORDER BY station_code"),
-      "loadCapacities"
-    )
-    const decoded = yield* decodeRows(Schema.Array(CapacityRow), rows, "loadCapacities")
-    capacityCache = new Map(decoded.map((row) => [row.station_code, row.capacity]))
-    return capacityCache
   })
 
   const loadMetadataStation = Effect.fn("VelibRepository.loadMetadataStation")(function*(code: number) {
@@ -443,14 +436,12 @@ const makeRepository = (db: D1Database): VelibRepository["Service"] => {
       ).bind(syncedAt),
       "syncMetadata.complete"
     )
-    capacityCache = new Map(stations.map((station) => [station.stationCode, station.capacity]))
     metadataFreshUntil = syncedAt + 86_400
   })
 
   const persistSnapshot = Effect.fn("VelibRepository.persistSnapshot")(function*(
     record: SnapshotRecord,
-    encoded: EncodedSnapshot,
-    capacities: ReadonlyMap<number, number> = new Map()
+    encoded: EncodedSnapshot
   ) {
     const previous = yield* loadLatestRecord()
     const status: CollectionStatus = previous !== null && (
@@ -463,10 +454,6 @@ const makeRepository = (db: D1Database): VelibRepository["Service"] => {
     const liveUpdatePayload = liveUpdate === null
       ? null
       : yield* stringify(liveUpdate, "serializeLiveUpdate")
-    const archiveCapacities = yield* stringify(
-      [...capacities.entries()],
-      "serializeArchiveCapacities"
-    )
     const statements = [
       db.prepare(
         `INSERT OR IGNORE INTO minute_snapshots
@@ -477,16 +464,6 @@ const makeRepository = (db: D1Database): VelibRepository["Service"] => {
         record.sourceUpdatedAt,
         record.snapshot.s.length,
         encoded.compressed
-      ),
-      db.prepare(
-        `INSERT OR IGNORE INTO station_observation_outbox
-           (observed_at, source_updated_at, capacities, next_attempt_at)
-         VALUES (?, ?, ?, ?)`
-      ).bind(
-        record.observedAt,
-        record.sourceUpdatedAt,
-        archiveCapacities,
-        record.observedAt
       ),
       db.prepare(
         `INSERT INTO latest_status (singleton, observed_at, source_updated_at, payload)
@@ -674,79 +651,29 @@ const makeRepository = (db: D1Database): VelibRepository["Service"] => {
     }
 
     const rollups = deriveRollups(bucketAt, snapshots, metadata)
-    const stationPayload = yield* stringify(
-      rollups.stations.map((rollup) => [
-        rollup.stationCode,
-        rollup.bucketAt,
-        rollup.sampleCount,
-        rollup.mechanical.min,
-        rollup.mechanical.max,
-        rollup.mechanical.avg,
-        rollup.mechanicalRemoved,
-        rollup.mechanicalReturned,
-        rollup.electric.min,
-        rollup.electric.max,
-        rollup.electric.avg,
-        rollup.electricRemoved,
-        rollup.electricReturned,
-        rollup.docks.min,
-        rollup.docks.max,
-        rollup.docks.avg,
-        rollup.unavailable.min,
-        rollup.unavailable.max,
-        rollup.unavailable.avg,
-        rollup.operativeSamples
-      ]),
-      "serializeStationRollups"
+    const shards = new Map<number, Array<(typeof rollups.stations)[number]>>()
+    for (const rollup of rollups.stations) {
+      const shard = rollupBucketShard(rollup.stationCode)
+      const values = shards.get(shard)
+      if (values === undefined) shards.set(shard, [rollup])
+      else values.push(rollup)
+    }
+    const stationWrites = yield* Effect.forEach(
+      shards,
+      ([shard, stationRollups]) => encodeRollupBucket(bucketAt, stationRollups).pipe(
+        Effect.mapError((cause) => decodeError("encodeRollupBucket", cause)),
+        Effect.map((payload) => db.prepare(
+          `INSERT INTO station_rollup_buckets_5m (bucket_at, shard, payload) VALUES (?, ?, ?)
+           ON CONFLICT(bucket_at, shard) DO UPDATE SET payload = excluded.payload`
+        ).bind(bucketAt, shard, payload))
+      ),
+      { concurrency: 4 }
     )
     const networkPayload = yield* stringify(rollups.network, "serializeNetworkRollup")
 
-    // One JSON bind bypasses D1's 100-parameter limit. `WHERE true` disambiguates
-    // SQLite's INSERT ... SELECT ... ON CONFLICT grammar.
     yield* runBatches(
       [
-        db.prepare(
-          `WITH input AS (SELECT value AS row FROM json_each(?))
-           INSERT INTO station_rollups_5m (
-             station_code, bucket_at, sample_count,
-             mechanical_min, mechanical_max, mechanical_avg, mechanical_removed, mechanical_returned,
-             electric_min, electric_max, electric_avg, electric_removed, electric_returned,
-             docks_min, docks_max, docks_avg,
-             unavailable_min, unavailable_max, unavailable_avg, operative_samples
-           )
-           SELECT
-             json_extract(row, '$[0]'), json_extract(row, '$[1]'),
-             json_extract(row, '$[2]'), json_extract(row, '$[3]'),
-             json_extract(row, '$[4]'), json_extract(row, '$[5]'),
-             json_extract(row, '$[6]'), json_extract(row, '$[7]'),
-             json_extract(row, '$[8]'), json_extract(row, '$[9]'),
-             json_extract(row, '$[10]'), json_extract(row, '$[11]'),
-             json_extract(row, '$[12]'), json_extract(row, '$[13]'),
-             json_extract(row, '$[14]'), json_extract(row, '$[15]'),
-             json_extract(row, '$[16]'), json_extract(row, '$[17]'),
-             json_extract(row, '$[18]'), json_extract(row, '$[19]')
-           FROM input
-           WHERE true
-           ON CONFLICT(station_code, bucket_at) DO UPDATE SET
-             sample_count = excluded.sample_count,
-             mechanical_min = excluded.mechanical_min,
-             mechanical_max = excluded.mechanical_max,
-             mechanical_avg = excluded.mechanical_avg,
-             mechanical_removed = excluded.mechanical_removed,
-             mechanical_returned = excluded.mechanical_returned,
-             electric_min = excluded.electric_min,
-             electric_max = excluded.electric_max,
-             electric_avg = excluded.electric_avg,
-             electric_removed = excluded.electric_removed,
-             electric_returned = excluded.electric_returned,
-             docks_min = excluded.docks_min,
-             docks_max = excluded.docks_max,
-             docks_avg = excluded.docks_avg,
-             unavailable_min = excluded.unavailable_min,
-             unavailable_max = excluded.unavailable_max,
-             unavailable_avg = excluded.unavailable_avg,
-             operative_samples = excluded.operative_samples`
-        ).bind(stationPayload),
+        ...stationWrites,
         db.prepare(
           `INSERT INTO network_rollups_5m (bucket_at, payload) VALUES (?, ?)
            ON CONFLICT(bucket_at) DO UPDATE SET payload = excluded.payload`
@@ -812,12 +739,12 @@ const makeRepository = (db: D1Database): VelibRepository["Service"] => {
     const cutoff = observedAt - RETENTION_SECONDS
     const cleanupSlot = Math.floor(observedAt / ROLLUP_SECONDS) % 300
     const statements: Array<D1PreparedStatement> = [
-      db.prepare("DELETE FROM station_observation_outbox WHERE observed_at < ?").bind(cutoff),
       db.prepare("DELETE FROM minute_snapshots WHERE observed_at < ?").bind(cutoff),
       db.prepare("DELETE FROM minute_updates WHERE observed_at < ?").bind(cutoff),
       db.prepare("DELETE FROM collection_runs WHERE observed_at < ?").bind(cutoff),
       db.prepare("DELETE FROM network_rollups_5m WHERE bucket_at < ?").bind(cutoff),
       db.prepare("DELETE FROM completed_rollups WHERE bucket_at < ?").bind(cutoff),
+      db.prepare("DELETE FROM station_rollup_buckets_5m WHERE bucket_at < ?").bind(cutoff),
       db.prepare(
         `DELETE FROM station_rollups_5m
          WHERE station_code IN (
@@ -1024,7 +951,7 @@ const makeRepository = (db: D1Database): VelibRepository["Service"] => {
       "history.rollups"
     )
     const decoded = yield* decodeRows(Schema.Array(RollupRow), rows, "history.rollups")
-    const points: Array<RollupHistoryPoint> = decoded.map((row) => ({
+    const points = new Map<number, RollupHistoryPoint>(decoded.map((row) => [row.bucket_at, {
       observedAt: row.bucket_at,
       sampleCount: row.sample_count,
       mechanical: Aggregate.make({ min: row.mechanical_min, max: row.mechanical_max, avg: row.mechanical_avg }),
@@ -1036,13 +963,40 @@ const makeRepository = (db: D1Database): VelibRepository["Service"] => {
       docks: Aggregate.make({ min: row.docks_min, max: row.docks_max, avg: row.docks_avg }),
       unavailable: Aggregate.make({ min: row.unavailable_min, max: row.unavailable_max, avg: row.unavailable_avg }),
       operativeSamples: row.operative_samples
-    }))
+    }]))
+    const bucketRows = yield* allRows(
+      db.prepare(
+        `SELECT bucket_at, shard, payload
+         FROM station_rollup_buckets_5m
+         WHERE shard = ? AND bucket_at >= ?
+         ORDER BY bucket_at`
+      ).bind(rollupBucketShard(code), now - rangeSeconds),
+      "history.rollupBuckets"
+    )
+    const decodedBuckets = yield* decodeRows(
+      Schema.Array(RollupBucketRow),
+      bucketRows,
+      "history.rollupBuckets"
+    )
+    for (const row of decodedBuckets) {
+      const bucket = yield* decodeRollupBucket(row.payload).pipe(
+        Effect.mapError((cause) => decodeError("history.rollupBucket", cause))
+      )
+      if (bucket[1] !== row.bucket_at || row.shard !== rollupBucketShard(code)) {
+        return yield* Effect.fail(decodeError(
+          "history.rollupBucket",
+          new Error("Packed rollup bucket does not match its D1 key")
+        ))
+      }
+      const point = stationPointFromBucket(bucket, code)
+      if (point !== null) points.set(point.observedAt, point)
+    }
 
     return {
       station: metadata,
       range,
       resolutionSeconds: ROLLUP_SECONDS,
-      points
+      points: [...points.values()].sort((left, right) => left.observedAt - right.observedAt)
     }
   })
 
@@ -1186,7 +1140,6 @@ const makeRepository = (db: D1Database): VelibRepository["Service"] => {
     hasMetadata,
     needsMetadata,
     syncMetadata,
-    capacities: loadCapacities,
     persistSnapshot,
     createRollups,
     cleanup,

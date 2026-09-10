@@ -7,12 +7,6 @@ import {
   VerificationRequired
 } from "./access"
 import { collectMinute } from "./application"
-import { ArchiveOutboxStore, makeArchiveOutboxStoreLive } from "./archive-outbox"
-import {
-  drainStationObservationOutbox,
-  type StationObservationOutbox,
-  type StationObservationPipeline
-} from "./archive"
 import { GbfsClientLive } from "./gbfs"
 import { LiveFeed } from "./live-feed"
 import { makeVelibRepositoryLive } from "./repository"
@@ -23,16 +17,11 @@ import { type SessionCryptoError } from "./signing"
 
 export { LiveFeed }
 
-interface AnalyticsBindings {
-  readonly OBSERVATIONS?: StationObservationPipeline
-}
-
-type RuntimeEnv = Omit<Env, keyof AnalyticsBindings> & AnalyticsBindings
+type RuntimeEnv = Env
 
 const makeRuntime = (env: RuntimeEnv) => {
   const repositoryLayer = makeVelibRepositoryLive(env.DB)
-  const archiveOutboxLayer = makeArchiveOutboxStoreLive(env.DB)
-  const rollupArchiveLayer = makeRollupArchiveLive(env.DB, env.HISTORY_ROLLUPS)
+  const rollupArchiveLayer = makeRollupArchiveLive(env.DB)
   const historyLayer = Layer.provide(
     TieredStationHistoryLive,
     Layer.merge(repositoryLayer, rollupArchiveLayer)
@@ -42,7 +31,6 @@ const makeRuntime = (env: RuntimeEnv) => {
     Layer.mergeAll(
       GbfsClientLive,
       repositoryLayer,
-      archiveOutboxLayer,
       rollupArchiveLayer,
       historyLayer,
       makeAccessControlLive(env)
@@ -147,43 +135,6 @@ const internalError = (): Response =>
     }
   )
 
-const makeStationObservationOutbox = (runtime: AppRuntime): StationObservationOutbox => ({
-  claim: (now, limit, leaseUntil) => runtime.runPromise(
-    Effect.flatMap(ArchiveOutboxStore, (outbox) => outbox.claim(now, limit, leaseUntil))
-  ),
-  complete: (observedAt) => runtime.runPromise(
-    Effect.flatMap(ArchiveOutboxStore, (outbox) => outbox.complete(observedAt))
-  ),
-  retry: (observedAt, nextAttemptAt) => runtime.runPromise(
-    Effect.flatMap(ArchiveOutboxStore, (outbox) => outbox.retry(observedAt, nextAttemptAt))
-  ),
-  release: (observedAts, nextAttemptAt) => runtime.runPromise(
-    Effect.flatMap(ArchiveOutboxStore, (outbox) => outbox.release(observedAts, nextAttemptAt))
-  )
-})
-
-const deliverArchives = async (
-  runtime: AppRuntime,
-  pipeline: StationObservationPipeline,
-  now: number
-): Promise<void> => {
-  try {
-    const result = await drainStationObservationOutbox(
-      pipeline,
-      makeStationObservationOutbox(runtime),
-      now
-    )
-    for (const delivery of result.deliveries) {
-      console.info("Station observations archived", delivery)
-    }
-    if (result.failed !== null) {
-      console.error("Station observation archive failed", result.failed)
-    }
-  } catch (cause) {
-    console.error("Station observation outbox failed", { cause })
-  }
-}
-
 const maintainRollupArchive = async (
   runtime: AppRuntime,
   now: number
@@ -192,7 +143,10 @@ const maintainRollupArchive = async (
     const result = await runtime.runPromise(
       Effect.flatMap(RollupArchive, (archive) => archive.maintain(now))
     )
-    if (result.enqueuedDays > 0 || result.prepared > 0 || result.delivered > 0 || result.failed > 0) {
+    if (
+      result.enqueuedDays > 0 || result.prepared > 0 || result.delivered > 0 ||
+      result.backfilled > 0 || result.failed > 0
+    ) {
       console.info("Station rollup archive maintained", result)
     }
   } catch (cause) {
@@ -248,33 +202,25 @@ const worker: ExportedHandler<RuntimeEnv> = {
     )
     const runtime = runtimeFor(env)
     const ingestion = runtime.runPromise(program).then(async (result) => {
-      const deliveries: Array<Promise<void>> = []
-      if (env.OBSERVATIONS !== undefined) {
-        deliveries.push(deliverArchives(runtime, env.OBSERVATIONS, observedAt))
-      }
       const liveUpdate = result.liveUpdate
-      if (liveUpdate !== null) {
-        deliveries.push((async () => {
-          try {
-            const delivered = await env.LIVE_FEED.getByName("network").broadcast(
-              JSON.stringify(liveUpdate)
-            )
-            if (delivered > 0) {
-              console.info("Live update broadcast", {
-                sourceUpdatedAt: liveUpdate.sourceUpdatedAt,
-                changes: liveUpdate.changes.length,
-                delivered
-              })
-            }
-          } catch (cause) {
-            console.error("Live update broadcast failed", {
-              sourceUpdatedAt: liveUpdate.sourceUpdatedAt,
-              cause
-            })
-          }
-        })())
+      if (liveUpdate === null) return
+      try {
+        const delivered = await env.LIVE_FEED.getByName("network").broadcast(
+          JSON.stringify(liveUpdate)
+        )
+        if (delivered > 0) {
+          console.info("Live update broadcast", {
+            sourceUpdatedAt: liveUpdate.sourceUpdatedAt,
+            changes: liveUpdate.changes.length,
+            delivered
+          })
+        }
+      } catch (cause) {
+        console.error("Live update broadcast failed", {
+          sourceUpdatedAt: liveUpdate.sourceUpdatedAt,
+          cause
+        })
       }
-      await Promise.all(deliveries)
     })
     context.waitUntil(Promise.all([
       ingestion,

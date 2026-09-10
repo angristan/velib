@@ -1,85 +1,57 @@
-# Analytics and long-term history
+# Analytics and history
 
-D1 remains authoritative for collection, live state, replay, and the hot seven-day window. R2 has two separate roles: immutable raw observations for offline analysis and compact rollup objects for fast long-range charts.
+D1 is authoritative for collection, live state, replay, and every chart range. The Worker no longer sends raw observations to Cloudflare Pipelines or writes new history objects to R2.
 
 ```text
 minute collection
-   ├── D1 snapshots + 5-minute rollups ──▶ live, replay, 1h/3h/1d/7d
-   ├── Pipeline ──▶ Iceberg raw observations ──▶ offline R2 SQL
-   └── bounded daily exporter ──▶ monthly R2 rollup objects ──▶ 30d/1y
+   ├── D1 snapshots ──▶ live, replay, 1h
+   ├── sharded 5-minute D1 buckets ──▶ 3h, 1d, 7d
+   └── daily station archive jobs ──▶ monthly D1 archives ──▶ 30d, 1y
 ```
 
-R2 SQL is intentionally not in the interactive request path. Production benchmarks of station-scoped SQL varied from about 3 to 12 seconds, including repeated cached queries. Direct R2 object reads provide a bounded serving path instead.
-
-## Raw archive
-
-Durable account resources belong in `cloudflare-tf`:
-
-- R2 bucket: `velib-analytics`
-- Data Catalog namespace: `velib`
-- Iceberg table: `station_observations_v1`
-- Pipeline stream: `velib_station_observations_stream_v1`
-- Pipeline sink: `velib_station_observations_catalog_v1`
-- Pipeline: `velib_station_observations_v1`
-
-The Worker owns the `OBSERVATIONS` Pipeline binding and the `HISTORY_ROLLUPS` R2 bucket binding in `wrangler.jsonc`.
-
-A successful minute snapshot and its immutable capacity map enter `station_observation_outbox` in the same D1 batch. Scheduled work leases at most three entries, retries Pipeline acceptance, and deletes an entry only after acceptance. Deterministic `event_id` values make ambiguous retries safe; offline SQL must deduplicate by `event_id` and latest `__ingest_ts`.
-
-Pipeline failure never fails authoritative D1 collection. Raw observations are for repair, export, and exceptional analysis—not normal page loads.
-
-## Precomputed rollup objects
-
-Each station has one gzip JSON object per UTC calendar month:
-
-```text
-rollups/v1/stations/{station-code}/{month-start-unix}.json.gz
-```
-
-The versioned object contains compact one-hour aggregates. The API returns:
+## History ranges
 
 | Range | Source | Resolution |
 | --- | --- | ---: |
 | `1h` | D1 minute snapshots | 1 minute |
-| `3h`, `1d`, `7d` | D1 station rollups | 5 minutes |
-| `30d` | monthly R2 objects plus D1 overlap | 1 hour |
-| `1y` | monthly R2 objects plus D1 overlap | 6 hours |
+| `3h`, `1d`, `7d` | D1 five-minute buckets | 5 minutes |
+| `30d` | monthly D1 archives plus five-minute overlap | 1 hour |
+| `1y` | monthly D1 archives plus five-minute overlap | 6 hours |
 
-D1 wins for overlapping timestamps. This keeps current data fresh while the current-month object is updated and lets object export lag without creating a chart gap.
+D1 five-minute data wins for overlapping timestamps. This keeps current data fresh while the completed-day archive catches up.
 
-## Durable generation
+## Packed five-minute buckets
 
-Migration `0006_station_rollup_archive.sql` adds day markers and a leased job queue. At minute 15 of every UTC hour, the Worker reconciles the six most recent complete days; day markers make repeated scheduling idempotent.
+Migration `0007_station_history_archives.sql` adds `station_rollup_buckets_5m`. Each five-minute collection writes at most 16 gzip-compressed shard rows instead of one `station_rollups_5m` row per station. A station always maps to the same shard, so a history request reads only that shard.
 
-Each scheduled invocation:
+The Worker reads both formats during the seven-day transition. Existing `station_rollups_5m` rows expire through the normal cleanup path. New collections write only the packed format.
 
-1. Captures up to 25 station/day payloads from retained D1 five-minute rollups.
-2. Persists the compact hourly payload in the D1 job before external I/O.
-3. Delivers up to eight prepared jobs to R2.
-4. Reads and validates the station-month object.
-5. Replaces that day and conditionally writes the new object by ETag.
-6. Deletes the job only after the R2 write succeeds.
+At 1,519 stations, this changes the main history path from about 437,000 station-row writes per day to at most 4,608 shard-row writes per day. Network rollups, completion markers, snapshots, and collection metadata remain separate D1 writes.
 
-Preparation and delivery failures use bounded exponential backoff. Prepared payloads survive D1 hot-history cleanup and Worker interruption. Jobs for the same station are delivered in day order. A crash after R2 write but before D1 completion is safe because replacing the same day is idempotent.
+## Monthly station archives
 
-Monitor pending/unprepared jobs, oldest job age, retries, object write conflicts, and completed day markers. Object generation failure must not affect collection, Pipeline delivery, or live broadcasts.
+`station_history_archives` stores one gzip-compressed JSON payload per station and UTC month. Each payload contains hourly points and a completion boundary.
 
-## Cost and CPU
+The existing durable job tables still protect daily generation:
 
-At 1,519 stations, raw Pipeline input is about 16.7 GB/month, below the Workers Paid 50 GB transform and sink allowances. Hourly monthly objects are small; one-year direct-object history is expected to remain below the standard R2 storage allowance when it is available.
+1. The Worker reconciles the six most recent completed UTC days.
+2. A job reads that station's packed or legacy five-minute points for one day.
+3. It aggregates the points to one-hour resolution and stores the prepared payload in D1.
+4. It replaces that day in the station's monthly D1 archive.
+5. It deletes the job only after the archive row is committed.
 
-D1 five-minute rollups remain enabled. This design optimizes serving latency and one-year retention, not Cron CPU. The measured Pipeline archive run rate was about 6.7 million Cron CPU-ms/month, below the account's 30 million included CPU-ms.
+Preparation and delivery use bounded retries. Replacing one day is idempotent. Archive failures do not stop collection or live broadcasts.
 
-## Retention
+At 00:15 UTC, the Worker removes archive months older than the month containing the one-year cutoff. Keeping the cutoff month prevents a gap at the start of the `1y` range.
 
-The intended retention is one year.
+## Retained R2 resources
 
-- A future R2 lifecycle rule may expire only `rollups/v1/` objects after a reviewed safety margin such as 400 days.
-- Never apply a bucket lifecycle rule to Iceberg data or metadata paths.
-- Raw-table retention requires an Iceberg transaction that deletes rows by `observed_at`, followed by catalog snapshot expiration and compaction. Direct object deletion can corrupt the table.
+The existing `velib-analytics` bucket, Data Catalog table, Pipeline resources, and stored data remain in `cloudflare-tf`. The application does not delete or mutate them.
 
-No destructive retention action is enabled by this application change. Review the exact lifecycle prefix and Iceberg maintenance plan before enabling deletion.
+The rollout copied and validated every existing monthly rollup into `station_history_archives` before removing the `HISTORY_ROLLUPS` binding. Infrastructure and data deletion require a separate reviewed operation.
+
+Do not add a generic lifecycle rule to `velib-analytics`. The bucket contains Iceberg data and metadata; direct object expiry can corrupt the table.
 
 ## Rollback
 
-Removing the `HISTORY_ROLLUPS` binding or tiered history deployment removes `30d` and `1y` serving but does not affect D1 collection or the existing hot history. Keep D1 rollups enabled throughout rollback. Do not delete R2 objects, raw observations, or D1 archive jobs as part of a code rollback.
+A code rollback can read the retained R2 rollups and existing legacy D1 rows. Do not delete packed buckets, D1 archives, R2 objects, or archive manifests as part of rollback.

@@ -66,16 +66,7 @@ export const collectMinute = Effect.fn("collectMinute")(function*(observedAt: nu
       snapshot
     }
     const encoded = yield* encodeSnapshot(snapshot)
-    const capacities = yield* repository.capacities().pipe(
-      Effect.catch((error) =>
-        Effect.logWarning("Station capacities unavailable for archive", {
-          operation: error.operation,
-          detail: error.detail
-        }).pipe(Effect.as(new Map<number, number>()))
-      )
-    )
-
-    const persisted = yield* repository.persistSnapshot(record, encoded, capacities)
+    const persisted = yield* repository.persistSnapshot(record, encoded)
     const collectionStatus = persisted.status
     const liveUpdate = persisted.liveUpdate
 

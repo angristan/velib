@@ -11,6 +11,11 @@ import {
 } from "./domain"
 import { deriveLiveUpdate } from "./live-update"
 import { makeVelibRepositoryLive, VelibRepository } from "./repository"
+import {
+  decodeRollupBucket,
+  rollupBucketShard,
+  stationPointFromBucket
+} from "./rollup-bucket"
 
 interface FakeStatement extends D1PreparedStatement {
   readonly sql: string
@@ -81,7 +86,6 @@ it.effect("validates the authoritative latest header before reusing the warm sna
   let fullPayloadReads = 0
   const persistedPayloads: string[] = []
   const persistedUpdates: string[] = []
-  const persistedArchiveCapacities: string[] = []
 
   const db = makeFakeDatabase({
     first: (sql) => {
@@ -114,12 +118,6 @@ it.effect("validates the authoritative latest header before reusing the warm sna
         }
         persistedPayloads.push(payload as string)
       }
-      const archiveStatement = statements.find((candidate) =>
-        candidate.sql.includes("INSERT OR IGNORE INTO station_observation_outbox")
-      )
-      if (archiveStatement !== undefined) {
-        persistedArchiveCapacities.push(archiveStatement.values[2] as string)
-      }
       const updateStatement = statements.find((candidate) =>
         candidate.sql.includes("INSERT OR IGNORE INTO minute_updates")
       )
@@ -136,16 +134,8 @@ it.effect("validates the authoritative latest header before reusing the warm sna
     const secondEncoded = yield* encodeSnapshot(second.snapshot)
     const repository = yield* VelibRepository
 
-    const firstResult = yield* repository.persistSnapshot(
-      first,
-      firstEncoded,
-      new Map([[2009, 15]])
-    )
-    const secondResult = yield* repository.persistSnapshot(
-      second,
-      secondEncoded,
-      new Map([[2009, 16]])
-    )
+    const firstResult = yield* repository.persistSnapshot(first, firstEncoded)
+    const secondResult = yield* repository.persistSnapshot(second, secondEncoded)
     const latestTimestamp = yield* repository.latestSourceUpdatedAt()
 
     assert.deepEqual(firstResult.previous, initial)
@@ -157,10 +147,6 @@ it.effect("validates the authoritative latest header before reusing the warm sna
     assert.deepEqual(persistedPayloads, [firstEncoded.text, secondEncoded.text])
     assert.strictEqual(persistedUpdates.length, 2)
     assert.strictEqual(JSON.parse(persistedUpdates[1] ?? "null").sourceUpdatedAt, 178)
-    assert.deepEqual(persistedArchiveCapacities.map((payload) => JSON.parse(payload)), [
-      [[2009, 15]],
-      [[2009, 16]]
-    ])
   }).pipe(Effect.provide(makeVelibRepositoryLive(db)))
 })
 
@@ -248,7 +234,7 @@ it.effect("discovers all rollup repairs with one D1 query", () => {
   }).pipe(Effect.provide(makeVelibRepositoryLive(db)))
 })
 
-it.effect("writes a station rollup with one JSON-backed D1 batch", () =>
+it.effect("writes a station rollup with one compressed D1 row", () =>
   Effect.gen(function*() {
     const bucketAt = 3_000
     const record = snapshotRecord(bucketAt, 5)
@@ -296,15 +282,20 @@ it.effect("writes a station rollup with one JSON-backed D1 batch", () =>
     assert.strictEqual(writeBatches[0]?.length, 3)
     const stationWrite = writeBatches[0]?.[0]
     assert.isDefined(stationWrite)
-    assert.include(stationWrite.sql, "json_each(?)")
-    assert.notInclude(stationWrite.sql, "VALUES (?,")
-    assert.deepEqual(JSON.parse(stationWrite.values[0] as string), [[
-      2009, bucketAt, 1,
-      5, 5, 5, 0, 0,
-      2, 2, 2, 0, 0,
-      8, 8, 8,
-      0, 0, 0, 1
-    ]])
+    assert.include(stationWrite.sql, "INSERT INTO station_rollup_buckets_5m")
+    assert.strictEqual(stationWrite.values[0], bucketAt)
+    assert.strictEqual(stationWrite.values[1], rollupBucketShard(2009))
+    const bucket = yield* decodeRollupBucket(stationWrite.values[2] as ArrayBuffer)
+    assert.strictEqual(bucket[1], bucketAt)
+    const point = stationPointFromBucket(bucket, 2009)
+    assert.isNotNull(point)
+    assert.strictEqual(point.observedAt, bucketAt)
+    assert.strictEqual(point.sampleCount, 1)
+    assert.strictEqual(point.mechanical.avg, 5)
+    assert.strictEqual(point.electric.avg, 2)
+    assert.strictEqual(point.docks.avg, 8)
+    assert.strictEqual(point.unavailable.avg, 0)
+    assert.strictEqual(point.operativeSamples, 1)
   })
 )
 
@@ -326,8 +317,8 @@ it.effect("runs staggered cleanup without station lookup round trips", () => {
 
     assert.strictEqual(batches.length, 1)
     assert.strictEqual(batches[0]?.length, 8)
-    assert.include(batches[0]?.[0]?.sql ?? "", "DELETE FROM station_observation_outbox")
-    assert.include(batches[0]?.[2]?.sql ?? "", "DELETE FROM minute_updates")
+    assert.include(batches[0]?.[1]?.sql ?? "", "DELETE FROM minute_updates")
+    assert.include(batches[0]?.[5]?.sql ?? "", "DELETE FROM station_rollup_buckets_5m")
     const rotatingCleanup = batches[0]?.[6]
     const bucketCleanup = batches[0]?.[7]
     assert.isDefined(rotatingCleanup)
@@ -366,31 +357,5 @@ it.effect("skips repeated metadata freshness reads within the daily window", () 
     assert.strictEqual(reads, 1)
     assert.isTrue(yield* repository.needsMetadata(syncedAt + 86_401))
     assert.strictEqual(reads, 2)
-  }).pipe(Effect.provide(makeVelibRepositoryLive(db)))
-})
-
-it.effect("caches station capacities after the first D1 read", () => {
-  let reads = 0
-  const db = makeFakeDatabase({
-    all: (sql) => {
-      if (sql.includes("SELECT station_code, capacity FROM stations")) {
-        reads += 1
-        return [
-          { station_code: 2009, capacity: 20 },
-          { station_code: 2010, capacity: 15 }
-        ]
-      }
-      throw new Error(`Unexpected query: ${sql}`)
-    }
-  })
-
-  return Effect.gen(function*() {
-    const repository = yield* VelibRepository
-    const first = yield* repository.capacities()
-    const second = yield* repository.capacities()
-
-    assert.strictEqual(reads, 1)
-    assert.strictEqual(first.get(2009), 20)
-    assert.strictEqual(second, first)
   }).pipe(Effect.provide(makeVelibRepositoryLive(db)))
 })

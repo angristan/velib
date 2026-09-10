@@ -23,7 +23,6 @@ it("returns 503 when human verification is unavailable", async () => {
         history: () => Effect.die("unused"),
       }),
       Effect.provideService(VelibRepository, {
-        capacities: () => Effect.die("unused"),
         cleanup: () => Effect.die("unused"),
         createRollups: () => Effect.die("unused"),
         hasMetadata: () => Effect.die("unused"),

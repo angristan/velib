@@ -41,7 +41,6 @@ const unused = () => Effect.die("unused")
 const makeRepository = (
   history: VelibRepository["Service"]["history"]
 ): VelibRepository["Service"] => ({
-  capacities: unused,
   cleanup: unused,
   createRollups: unused,
   hasMetadata: unused,

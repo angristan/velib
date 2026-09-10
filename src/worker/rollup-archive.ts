@@ -6,6 +6,11 @@ import {
   RETENTION_SECONDS,
   type RollupHistoryPoint
 } from "./domain"
+import {
+  decodeRollupBucket,
+  rollupBucketShard,
+  stationPointFromBucket
+} from "./rollup-bucket"
 
 export const HOUR_SECONDS = 60 * 60
 export const DAY_SECONDS = 24 * HOUR_SECONDS
@@ -54,6 +59,17 @@ const MonthlyRollupObject = Schema.Struct({
   hourly: Schema.Array(PackedRollup)
 })
 
+const RollupBucketPayload = Schema.Union([
+  Schema.Array(Schema.Number),
+  Schema.Uint8Array,
+  Schema.instanceOf(ArrayBuffer)
+])
+const RollupBucketRow = Schema.Struct({
+  bucket_at: Schema.Number,
+  shard: Schema.Number,
+  payload: RollupBucketPayload
+})
+
 const RollupRow = Schema.Struct({
   bucket_at: Schema.Number,
   sample_count: Schema.Number,
@@ -84,7 +100,20 @@ const ArchiveJobRow = Schema.Struct({
   last_attempt_at: Schema.Number
 })
 
-const ArchiveObjectRow = Schema.Struct({
+const ArchivePayload = Schema.Union([
+  Schema.Array(Schema.Number),
+  Schema.Uint8Array,
+  Schema.instanceOf(ArrayBuffer)
+])
+
+const HistoryArchiveRow = Schema.Struct({
+  month_at: Schema.Number,
+  complete_through: Schema.Number,
+  payload: ArchivePayload
+})
+
+const LegacyArchiveObjectRow = Schema.Struct({
+  station_code: Schema.Number,
   month_at: Schema.Number,
   complete_through: Schema.Number,
   etag: Schema.String
@@ -103,13 +132,18 @@ export interface RollupArchiveMaintenance {
   readonly enqueuedDays: number
   readonly prepared: number
   readonly delivered: number
+  readonly backfilled: number
   readonly failed: number
 }
 
 export class RollupArchive extends Context.Service<RollupArchive, {
   readonly maintain: (
     now: number,
-    options?: { readonly prepareLimit?: number; readonly deliveryLimit?: number }
+    options?: {
+      readonly prepareLimit?: number
+      readonly deliveryLimit?: number
+      readonly backfillLimit?: number
+    }
   ) => Effect.Effect<RollupArchiveMaintenance, RollupArchiveError>
   readonly hourlyHistory: (
     stationCode: number,
@@ -186,10 +220,13 @@ const gzip = Effect.fn("RollupArchive.gzip")(function*(text: string) {
   })
 })
 
-const gunzip = Effect.fn("RollupArchive.gunzip")(function*(payload: ArrayBuffer) {
+const gunzip = Effect.fn("RollupArchive.gunzip")(function*(
+  payload: ArrayBuffer | Uint8Array<ArrayBufferLike> | ReadonlyArray<number>
+) {
   return yield* Effect.tryPromise({
     try: async () => {
-      const input = new Blob([payload]).stream()
+      const bytes = payload instanceof ArrayBuffer ? payload : Uint8Array.from(payload)
+      const input = new Blob([bytes]).stream()
       const reader = input.pipeThrough(new DecompressionStream("gzip")).getReader()
       const decoder = new TextDecoder()
       let size = 0
@@ -356,7 +393,7 @@ const monthStartsBetween = (from: number, to: number): Array<number> => {
 export const archiveRetryDelaySeconds = (attempts: number): number =>
   Math.min(15 * 60, 60 * 2 ** Math.min(Math.max(0, attempts - 1), 4))
 
-const makeRollupArchive = (db: D1Database, bucket: R2Bucket): RollupArchive["Service"] => {
+const makeRollupArchive = (db: D1Database, legacyBucket?: R2Bucket): RollupArchive["Service"] => {
   const enqueueDay = Effect.fn("RollupArchive.enqueueDay")(function*(dayAt: number, now: number) {
     yield* runBatch(db, [
       db.prepare(
@@ -456,11 +493,56 @@ const makeRollupArchive = (db: D1Database, bucket: R2Bucket): RollupArchive["Ser
       "prepare.rollups"
     )
     const decoded = yield* decode(Schema.Array(RollupRow), rows, "prepare.rollups")
+    const points = new Map<number, RollupHistoryPoint>(decoded.map((row) => [
+      row.bucket_at,
+      pointFromRow(row)
+    ]))
+    const bucketRows = yield* allRows(
+      db.prepare(
+        `SELECT bucket_at, shard, payload
+         FROM station_rollup_buckets_5m
+         WHERE shard = ? AND bucket_at >= ? AND bucket_at < ?
+         ORDER BY bucket_at`
+      ).bind(
+        rollupBucketShard(job.station_code),
+        job.day_at,
+        job.day_at + DAY_SECONDS
+      ),
+      "prepare.rollupBuckets"
+    )
+    const buckets = yield* decode(
+      Schema.Array(RollupBucketRow),
+      bucketRows,
+      "prepare.rollupBuckets"
+    )
+    for (const row of buckets) {
+      const bucket = yield* decodeRollupBucket(row.payload).pipe(
+        Effect.mapError((cause) => archiveError(
+          "prepare.rollupBucket",
+          "Could not decode packed rollup bucket",
+          cause
+        ))
+      )
+      if (
+        bucket[1] !== row.bucket_at ||
+        row.shard !== rollupBucketShard(job.station_code)
+      ) {
+        return yield* Effect.fail(archiveError(
+          "prepare.rollupBucket",
+          "Packed rollup bucket does not match its D1 key"
+        ))
+      }
+      const point = stationPointFromBucket(bucket, job.station_code)
+      if (point !== null) points.set(point.observedAt, point)
+    }
     const block = DailyRollupBlock.make({
       v: 1,
       stationCode: job.station_code,
       dayAt: job.day_at,
-      hourly: aggregateRollupPoints(decoded.map(pointFromRow), HOUR_SECONDS).map(packPoint)
+      hourly: aggregateRollupPoints(
+        [...points.values()].sort((left, right) => left.observedAt - right.observedAt),
+        HOUR_SECONDS
+      ).map(packPoint)
     })
     const payload = yield* stringify(block, "prepare.payload")
     yield* runStatement(
@@ -473,122 +555,136 @@ const makeRollupArchive = (db: D1Database, bucket: R2Bucket): RollupArchive["Ser
     )
   })
 
-  const loadMonthlyObject = Effect.fn("RollupArchive.loadMonthlyObject")(function*(
+  const decodeMonthlyPayload = Effect.fn("RollupArchive.decodeMonthlyPayload")(function*(
+    payload: ArrayBuffer | Uint8Array<ArrayBufferLike> | ReadonlyArray<number>,
     stationCode: number,
-    monthAt: number
+    monthAt: number,
+    operation: string
   ) {
-    const object = yield* Effect.tryPromise({
-      try: () => bucket.get(rollupObjectKey(stationCode, monthAt)),
-      catch: (cause) => archiveError("r2.get", "Could not read rollup archive object", cause)
-    })
-    if (object === null) return null
-    if (object.size > MAX_COMPRESSED_OBJECT_BYTES) {
-      return yield* Effect.fail(archiveError("r2.size", "Rollup archive object exceeds its size limit"))
+    const byteLength = payload instanceof ArrayBuffer || payload instanceof Uint8Array
+      ? payload.byteLength
+      : payload.length
+    if (byteLength > MAX_COMPRESSED_OBJECT_BYTES) {
+      return yield* Effect.fail(archiveError(operation, "Rollup archive exceeds its size limit"))
     }
-    const compressed = yield* Effect.tryPromise({
-      try: () => object.arrayBuffer(),
-      catch: (cause) => archiveError("r2.read", "Could not read rollup archive body", cause)
-    })
-    const text = yield* gunzip(compressed)
-    const input = yield* parseJson(text, "r2.json")
-    const monthly = yield* decode(MonthlyRollupObject, input, "r2.object")
+    const text = yield* gunzip(payload)
+    const input = yield* parseJson(text, `${operation}.json`)
+    const monthly = yield* decode(MonthlyRollupObject, input, `${operation}.payload`)
     if (monthly.stationCode !== stationCode || monthly.monthAt !== monthAt) {
       return yield* Effect.fail(archiveError(
-        "r2.identity",
-        "Rollup archive object does not match its key"
+        `${operation}.identity`,
+        "Rollup archive does not match its D1 key"
       ))
     }
-    const nextMonthAt = (() => {
-      const date = new Date(monthAt * 1_000)
-      return Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + 1, 1) / 1_000
-    })()
+    const date = new Date(monthAt * 1_000)
+    const nextMonthAt = Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + 1, 1) / 1_000
     if (monthly.completeThrough < monthAt || monthly.completeThrough > nextMonthAt) {
       return yield* Effect.fail(archiveError(
-        "r2.coverage",
+        `${operation}.coverage`,
         "Rollup archive completion boundary is invalid"
       ))
     }
-    yield* validatePackedPoints(monthly.hourly, monthAt, nextMonthAt, "r2.timestamps")
-    return { monthly, etag: object.etag }
+    yield* validatePackedPoints(monthly.hourly, monthAt, nextMonthAt, `${operation}.timestamps`)
+    return monthly
   })
 
-  const putDailyBlock = Effect.fn("RollupArchive.putDailyBlock")(function*(
+  const loadMonthlyArchive = Effect.fn("RollupArchive.loadMonthlyArchive")(function*(
+    stationCode: number,
+    monthAt: number
+  ) {
+    const rows = yield* allRows(
+      db.prepare(
+        `SELECT month_at, complete_through, payload
+         FROM station_history_archives
+         WHERE station_code = ? AND month_at = ?`
+      ).bind(stationCode, monthAt),
+      "history.load"
+    )
+    const decoded = yield* decode(Schema.Array(HistoryArchiveRow), rows, "history.load")
+    const row = decoded[0]
+    if (row === undefined) return null
+    const monthly = yield* decodeMonthlyPayload(row.payload, stationCode, monthAt, "history")
+    if (monthly.completeThrough < row.complete_through) {
+      return yield* Effect.fail(archiveError(
+        "history.stale",
+        "Rollup archive payload is older than its D1 metadata"
+      ))
+    }
+    return monthly
+  })
+
+  const loadLegacyMonthlyObject = Effect.fn("RollupArchive.loadLegacyMonthlyObject")(function*(
+    stationCode: number,
+    monthAt: number
+  ) {
+    if (legacyBucket === undefined) return null
+    const object = yield* Effect.tryPromise({
+      try: () => legacyBucket.get(rollupObjectKey(stationCode, monthAt)),
+      catch: (cause) => archiveError("legacy.get", "Could not read legacy R2 rollup", cause)
+    })
+    if (object === null) return null
+    const payload = yield* Effect.tryPromise({
+      try: () => object.arrayBuffer(),
+      catch: (cause) => archiveError("legacy.read", "Could not read legacy R2 rollup body", cause)
+    })
+    const monthly = yield* decodeMonthlyPayload(payload, stationCode, monthAt, "legacy")
+    return { monthly, etag: object.etag, payload }
+  })
+
+  const buildMonthlyArchive = Effect.fn("RollupArchive.buildMonthlyArchive")(function*(
     block: typeof DailyRollupBlock.Type
   ) {
     const monthAt = utcMonthStart(block.dayAt)
-    const current = yield* loadMonthlyObject(block.stationCode, monthAt)
+    const stored = yield* loadMonthlyArchive(block.stationCode, monthAt)
+    const legacy = stored === null
+      ? yield* loadLegacyMonthlyObject(block.stationCode, monthAt)
+      : null
+    const current = stored ?? legacy?.monthly ?? null
     const from = block.dayAt
     const to = from + DAY_SECONDS
     const hourly = [
-      ...(current?.monthly.hourly ?? []).filter((point) => point[0] < from || point[0] >= to),
+      ...(current?.hourly ?? []).filter((point) => point[0] < from || point[0] >= to),
       ...block.hourly
     ].sort((left, right) => left[0] - right[0])
     const monthly = MonthlyRollupObject.make({
       v: 1,
       stationCode: block.stationCode,
       monthAt,
-      completeThrough: Math.max(current?.monthly.completeThrough ?? monthAt, block.dayAt + DAY_SECONDS),
+      completeThrough: Math.max(current?.completeThrough ?? monthAt, block.dayAt + DAY_SECONDS),
       hourly
     })
-    const text = yield* stringify(monthly, "r2.serialize")
-    const compressed = yield* gzip(text)
-    const written = yield* Effect.tryPromise({
-      try: () => bucket.put(
-        rollupObjectKey(block.stationCode, monthAt),
-        compressed,
-        {
-          onlyIf: current === null
-            ? { etagDoesNotMatch: "*" }
-            : { etagMatches: current.etag },
-          httpMetadata: {
-            contentEncoding: "gzip",
-            contentType: "application/json"
-          },
-          customMetadata: {
-            schema: "station-rollups-v1",
-            stationCode: String(block.stationCode),
-            monthAt: String(monthAt)
-          }
-        }
-      ),
-      catch: (cause) => archiveError("r2.put", "Could not write rollup archive object", cause)
-    })
-    if (written === null) {
-      return yield* Effect.fail(archiveError(
-        "r2.conflict",
-        "Rollup archive object changed during update"
-      ))
-    }
-    return {
-      monthAt,
-      completeThrough: monthly.completeThrough,
-      etag: written.etag
-    }
+    const text = yield* stringify(monthly, "history.serialize")
+    const payload = yield* gzip(text)
+    return { monthly, payload }
   })
 
   const complete = Effect.fn("RollupArchive.complete")(function*(
     job: typeof ArchiveJobRow.Type,
-    object: { readonly monthAt: number; readonly completeThrough: number; readonly etag: string },
+    archive: {
+      readonly monthly: typeof MonthlyRollupObject.Type
+      readonly payload: ArrayBuffer
+    },
     now: number
   ) {
     yield* runBatch(db, [
       db.prepare(
-        `INSERT INTO station_rollup_archive_objects
-           (station_code, month_at, complete_through, etag, updated_at)
+        `INSERT INTO station_history_archives
+           (station_code, month_at, complete_through, payload, updated_at)
          SELECT ?, ?, ?, ?, ?
          WHERE EXISTS (
            SELECT 1 FROM station_rollup_archive_jobs
            WHERE day_at = ? AND station_code = ? AND last_attempt_at = ?
          )
          ON CONFLICT(station_code, month_at) DO UPDATE SET
-           complete_through = MAX(complete_through, excluded.complete_through),
-           etag = excluded.etag,
-           updated_at = excluded.updated_at`
+           complete_through = excluded.complete_through,
+           payload = excluded.payload,
+           updated_at = excluded.updated_at
+         WHERE excluded.complete_through >= station_history_archives.complete_through`
       ).bind(
         job.station_code,
-        object.monthAt,
-        object.completeThrough,
-        object.etag,
+        archive.monthly.monthAt,
+        archive.monthly.completeThrough,
+        archive.payload,
         now,
         job.day_at,
         job.station_code,
@@ -652,8 +748,8 @@ const makeRollupArchive = (db: D1Database, bucket: R2Bucket): RollupArchive["Ser
           block.dayAt + DAY_SECONDS,
           "deliver.timestamps"
         )
-        const object = yield* putDailyBlock(block)
-        yield* complete(job, object, now)
+        const archive = yield* buildMonthlyArchive(block)
+        yield* complete(job, archive, now)
       }).pipe(
         Effect.as(true),
         Effect.catch((error) => retry(job, now).pipe(
@@ -672,18 +768,106 @@ const makeRollupArchive = (db: D1Database, bucket: R2Bucket): RollupArchive["Ser
     return { delivered, failed }
   })
 
+  const backfillLegacyArchives = Effect.fn("RollupArchive.backfillLegacyArchives")(function*(
+    now: number,
+    limit: number
+  ) {
+    if (legacyBucket === undefined || limit === 0) return { backfilled: 0, failed: 0 }
+    const rows = yield* allRows(
+      db.prepare(
+        `SELECT legacy.station_code, legacy.month_at, legacy.complete_through, legacy.etag
+         FROM station_rollup_archive_objects AS legacy
+         LEFT JOIN station_history_archives AS history
+           ON history.station_code = legacy.station_code
+          AND history.month_at = legacy.month_at
+         WHERE history.station_code IS NULL
+         ORDER BY legacy.month_at, legacy.station_code
+         LIMIT ?`
+      ).bind(limit),
+      "backfill.discover"
+    )
+    const manifests = yield* decode(
+      Schema.Array(LegacyArchiveObjectRow),
+      rows,
+      "backfill.discover"
+    )
+    const outcomes = yield* Effect.forEach(
+      manifests,
+      (manifest) => Effect.gen(function*() {
+        const loaded = yield* loadLegacyMonthlyObject(manifest.station_code, manifest.month_at)
+        if (loaded === null) {
+          return yield* Effect.fail(archiveError(
+            "backfill.missing",
+            "Legacy R2 rollup is missing"
+          ))
+        }
+        if (
+          loaded.etag !== manifest.etag ||
+          loaded.monthly.completeThrough < manifest.complete_through
+        ) {
+          return yield* Effect.fail(archiveError(
+            "backfill.stale",
+            "Legacy R2 rollup does not match its D1 manifest"
+          ))
+        }
+        yield* runStatement(
+          db.prepare(
+            `INSERT INTO station_history_archives
+               (station_code, month_at, complete_through, payload, updated_at)
+             VALUES (?, ?, ?, ?, ?)
+             ON CONFLICT(station_code, month_at) DO NOTHING`
+          ).bind(
+            manifest.station_code,
+            manifest.month_at,
+            loaded.monthly.completeThrough,
+            loaded.payload,
+            now
+          ),
+          "backfill.save"
+        )
+      }).pipe(
+        Effect.as(true),
+        Effect.catch((error) => Effect.logError("Legacy rollup backfill failed", {
+          stationCode: manifest.station_code,
+          monthAt: manifest.month_at,
+          operation: error.operation,
+          detail: error.detail
+        }).pipe(Effect.as(false)))
+      ),
+      { concurrency: 4 }
+    )
+    return {
+      backfilled: outcomes.filter(Boolean).length,
+      failed: outcomes.filter((outcome) => !outcome).length
+    }
+  })
+
   const maintain = Effect.fn("RollupArchive.maintain")(function*(
     now: number,
-    options: { readonly prepareLimit?: number; readonly deliveryLimit?: number } = {}
+    options: {
+      readonly prepareLimit?: number
+      readonly deliveryLimit?: number
+      readonly backfillLimit?: number
+    } = {}
   ) {
     const enqueuedDays = yield* enqueueRecentDays(now)
     const preparation = yield* prepareJobs(now, options.prepareLimit ?? 25)
     const delivery = yield* deliverJobs(now, options.deliveryLimit ?? 8)
+    const backfill = yield* backfillLegacyArchives(now, options.backfillLimit ?? 400)
+    if (now % DAY_SECONDS === 15 * 60) {
+      yield* runStatement(
+        db.prepare("DELETE FROM station_history_archives WHERE month_at < ?").bind(
+          utcMonthStart(now - ROLLUP_ARCHIVE_RETENTION_SECONDS)
+        ),
+        "history.prune"
+      )
+    }
     return {
       enqueuedDays,
       prepared: preparation.prepared,
       delivered: delivery.delivered,
-      failed: preparation.failed + delivery.failed
+      backfilled: backfill.backfilled,
+      failed: preparation.failed + delivery.failed + backfill.failed
     }
   })
 
@@ -695,43 +879,16 @@ const makeRollupArchive = (db: D1Database, bucket: R2Bucket): RollupArchive["Ser
     const rangeSeconds = range === "30d" ? 30 * DAY_SECONDS : ROLLUP_ARCHIVE_RETENTION_SECONDS
     const from = now - rangeSeconds
     const requestedMonths = monthStartsBetween(from, now)
-    const placeholders = requestedMonths.map(() => "?").join(", ")
-    const rows = requestedMonths.length === 0
-      ? []
-      : yield* allRows(
-        db.prepare(
-          `SELECT month_at, complete_through, etag
-           FROM station_rollup_archive_objects
-           WHERE station_code = ? AND month_at IN (${placeholders})
-           ORDER BY month_at`
-        ).bind(stationCode, ...requestedMonths),
-        "history.manifest"
-      )
-    const manifests = yield* decode(Schema.Array(ArchiveObjectRow), rows, "history.manifest")
     const objects = yield* Effect.forEach(
-      manifests,
-      (manifest) => Effect.gen(function*() {
-        const loaded = yield* loadMonthlyObject(stationCode, manifest.month_at)
-        if (loaded === null) {
-          return yield* Effect.fail(archiveError(
-            "history.missing",
-            "Expected rollup archive object is missing"
-          ))
-        }
-        if (
-          loaded.etag !== manifest.etag ||
-          loaded.monthly.completeThrough < manifest.complete_through
-        ) {
-          return yield* Effect.fail(archiveError(
-            "history.stale",
-            "Rollup archive object does not match its manifest"
-          ))
-        }
-        return loaded.monthly
+      requestedMonths,
+      (monthAt) => Effect.gen(function*() {
+        const stored = yield* loadMonthlyArchive(stationCode, monthAt)
+        if (stored !== null) return stored
+        return (yield* loadLegacyMonthlyObject(stationCode, monthAt))?.monthly ?? null
       }),
       { concurrency: 4 }
     )
-    const points = objects.flatMap((monthly) => monthly.hourly.map(unpackPoint))
+    const points = objects.flatMap((monthly) => monthly?.hourly.map(unpackPoint) ?? [])
     const unique = new Map<number, RollupHistoryPoint>()
     for (const point of points) {
       if (point.observedAt >= from && point.observedAt <= now) unique.set(point.observedAt, point)
@@ -742,5 +899,5 @@ const makeRollupArchive = (db: D1Database, bucket: R2Bucket): RollupArchive["Ser
   return { maintain, hourlyHistory }
 }
 
-export const makeRollupArchiveLive = (db: D1Database, bucket: R2Bucket) =>
-  Layer.succeed(RollupArchive, makeRollupArchive(db, bucket))
+export const makeRollupArchiveLive = (db: D1Database, legacyBucket?: R2Bucket) =>
+  Layer.succeed(RollupArchive, makeRollupArchive(db, legacyBucket))

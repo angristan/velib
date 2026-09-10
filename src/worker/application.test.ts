@@ -11,7 +11,7 @@ import { VelibRepository } from "./repository"
 
 const unused = () => Effect.die("unused")
 
-it.effect("archives successful snapshots and maintains D1 rollups", () => {
+it.effect("persists successful snapshots and maintains D1 rollups", () => {
   const observedAt = 1_786_915_500
   const sourceUpdatedAt = observedAt - 20
   const station = CompactStation.make({
@@ -24,14 +24,12 @@ it.effect("archives successful snapshots and maintains D1 rollups", () => {
   })
   let rollupCalls = 0
   let persisted: SnapshotRecord | undefined
-  let persistedCapacities: ReadonlyMap<number, number> | undefined
 
   return Effect.gen(function*() {
     const result = yield* collectMinute(observedAt)
 
     assert.strictEqual(rollupCalls, 1)
     assert.strictEqual(persisted?.observedAt, observedAt)
-    assert.deepEqual(persistedCapacities, new Map([[2009, 20]]))
     assert.deepEqual(result, { liveUpdate: null })
   }).pipe(
     Effect.provideService(GbfsClient, {
@@ -42,7 +40,6 @@ it.effect("archives successful snapshots and maintains D1 rollups", () => {
       })
     }),
     Effect.provideService(VelibRepository, {
-      capacities: () => Effect.succeed(new Map([[2009, 20]])),
       cleanup: () => Effect.void,
       createRollups: () => {
         rollupCalls += 1
@@ -55,9 +52,8 @@ it.effect("archives successful snapshots and maintains D1 rollups", () => {
       live: unused,
       metadata: unused,
       needsMetadata: () => Effect.succeed(false),
-      persistSnapshot: (record, _encoded, capacities) => {
+      persistSnapshot: (record) => {
         persisted = record
-        persistedCapacities = capacities
         return Effect.succeed({
           status: "ok" as const,
           previous: null,
@@ -89,7 +85,6 @@ it.effect("does not archive a stale source observation", () => {
       })
     }),
     Effect.provideService(VelibRepository, {
-      capacities: () => Effect.succeed(new Map([[2009, 20]])),
       cleanup: () => Effect.void,
       createRollups: () => Effect.void,
       hasMetadata: unused,
