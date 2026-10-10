@@ -1,4 +1,4 @@
-import { Context, Effect, Layer, Schema } from "effect"
+import { Context, Effect, Layer, Result, Schema } from "effect"
 
 import {
   Aggregate,
@@ -8,6 +8,7 @@ import {
 } from "./domain"
 import {
   decodeRollupBucket,
+  ROLLUP_BUCKET_SHARDS,
   rollupBucketShard,
   stationPointFromBucket
 } from "./rollup-bucket"
@@ -392,7 +393,9 @@ const makeRollupArchive = (db: D1Database): RollupArchive["Service"] => {
                WHERE older.station_code = candidate.station_code
                  AND older.day_at < candidate.day_at
              )` : ""}
-           ORDER BY candidate.day_at, candidate.station_code
+           ORDER BY candidate.day_at,
+             ${payloadReady ? "" : `candidate.station_code % ${ROLLUP_BUCKET_SHARDS},`}
+             candidate.station_code
            LIMIT ?
          )
          RETURNING day_at, station_code, payload, attempts, last_attempt_at`
@@ -421,11 +424,13 @@ const makeRollupArchive = (db: D1Database): RollupArchive["Service"] => {
     )
   })
 
-  const prepareOne = Effect.fn("RollupArchive.prepareOne")(function*(
-    job: typeof ArchiveJobRow.Type,
+  const loadPreparationPoints = Effect.fn("RollupArchive.loadPreparationPoints")(function*(
+    dayAt: number,
+    shard: number,
+    stationCodes: ReadonlyArray<number>,
     now: number
   ) {
-    if (job.day_at < utcDayStart(now - RETENTION_SECONDS)) {
+    if (dayAt < utcDayStart(now - RETENTION_SECONDS)) {
       return yield* Effect.fail(archiveError(
         "prepare.expired",
         "Source rollups expired before this archive job was prepared"
@@ -438,9 +443,9 @@ const makeRollupArchive = (db: D1Database): RollupArchive["Service"] => {
          WHERE shard = ? AND bucket_at >= ? AND bucket_at < ?
          ORDER BY bucket_at`
       ).bind(
-        rollupBucketShard(job.station_code),
-        job.day_at,
-        job.day_at + DAY_SECONDS
+        shard,
+        dayAt,
+        dayAt + DAY_SECONDS
       ),
       "prepare.rollupBuckets"
     )
@@ -449,7 +454,9 @@ const makeRollupArchive = (db: D1Database): RollupArchive["Service"] => {
       bucketRows,
       "prepare.rollupBuckets"
     )
-    const points: RollupHistoryPoint[] = []
+    const points = new Map<number, RollupHistoryPoint[]>(
+      stationCodes.map((code) => [code, []])
+    )
     for (const row of buckets) {
       const bucket = yield* decodeRollupBucket(row.payload).pipe(
         Effect.mapError((cause) => archiveError(
@@ -460,16 +467,26 @@ const makeRollupArchive = (db: D1Database): RollupArchive["Service"] => {
       )
       if (
         bucket[1] !== row.bucket_at ||
-        row.shard !== rollupBucketShard(job.station_code)
+        row.shard !== shard
       ) {
         return yield* Effect.fail(archiveError(
           "prepare.rollupBucket",
           "Packed rollup bucket does not match its D1 key"
         ))
       }
-      const point = stationPointFromBucket(bucket, job.station_code)
-      if (point !== null) points.push(point)
+      for (const [stationCode, stationPoints] of points) {
+        const point = stationPointFromBucket(bucket, stationCode)
+        if (point !== null) stationPoints.push(point)
+      }
     }
+    return points
+  })
+
+  const prepareOne = Effect.fn("RollupArchive.prepareOne")(function*(
+    job: typeof ArchiveJobRow.Type,
+    now: number,
+    points: ReadonlyArray<RollupHistoryPoint>
+  ) {
     const block = DailyRollupBlock.make({
       v: 1,
       stationCode: job.station_code,
@@ -619,21 +636,41 @@ const makeRollupArchive = (db: D1Database): RollupArchive["Service"] => {
     const jobs = yield* claim(now, limit, false)
     let prepared = 0
     let failed = 0
+    const groups = new Map<string, Array<typeof ArchiveJobRow.Type>>()
     for (const job of jobs) {
-      const outcome = yield* prepareOne(job, now).pipe(
-        Effect.as(true),
-        Effect.catch((error) => retry(job, now).pipe(
-          Effect.andThen(Effect.logError("Rollup archive preparation failed", {
-            dayAt: job.day_at,
-            stationCode: job.station_code,
-            operation: error.operation,
-            detail: error.detail
-          })),
-          Effect.as(false)
-        ))
-      )
-      if (outcome) prepared += 1
-      else failed += 1
+      const key = `${job.day_at}:${rollupBucketShard(job.station_code)}`
+      const group = groups.get(key)
+      if (group === undefined) groups.set(key, [job])
+      else group.push(job)
+    }
+    for (const group of groups.values()) {
+      const first = group[0]
+      if (first === undefined) continue
+      const source = yield* loadPreparationPoints(
+        first.day_at,
+        rollupBucketShard(first.station_code),
+        group.map((job) => job.station_code),
+        now
+      ).pipe(Effect.result)
+      for (const job of group) {
+        const preparation = Result.isFailure(source)
+          ? Effect.fail(source.failure)
+          : prepareOne(job, now, source.success.get(job.station_code) ?? [])
+        const outcome = yield* preparation.pipe(
+          Effect.as(true),
+          Effect.catch((error) => retry(job, now).pipe(
+            Effect.andThen(Effect.logError("Rollup archive preparation failed", {
+              dayAt: job.day_at,
+              stationCode: job.station_code,
+              operation: error.operation,
+              detail: error.detail
+            })),
+            Effect.as(false)
+          ))
+        )
+        if (outcome) prepared += 1
+        else failed += 1
+      }
     }
     return { prepared, failed }
   })

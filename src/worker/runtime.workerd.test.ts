@@ -1,6 +1,6 @@
 import { env } from "cloudflare:workers"
 import { Effect } from "effect"
-import { describe, expect, it } from "vitest"
+import { describe, expect, it, vi } from "vitest"
 
 import { encodeSnapshot } from "./codec"
 import {
@@ -201,6 +201,161 @@ describe("Worker runtime bindings", () => {
     expect(replacement[0]?.sampleCount).toBe(60)
     expect(replacement[0]?.mechanical.avg).toBeCloseTo(61 / 12)
 
+  })
+
+  it("prepares same-shard stations within one source-read budget", async () => {
+    const dayAt = 80 * DAY_SECONDS
+    const now = dayAt + DAY_SECONDS
+    const stationCodes = [880_001, 880_017, 880_002]
+    const rollup = (stationCode: number, bucketAt: number, average: number) => ({
+      stationCode,
+      bucketAt,
+      sampleCount: 5,
+      mechanical: Aggregate.make({ min: average, max: average, avg: average }),
+      mechanicalRemoved: 1,
+      mechanicalReturned: 2,
+      electric: Aggregate.make({ min: 1, max: 3, avg: 2 }),
+      electricRemoved: 1,
+      electricReturned: 1,
+      docks: Aggregate.make({ min: 8, max: 12, avg: 10 }),
+      unavailable: Aggregate.make({ min: 0, max: 2, avg: 1 }),
+      operativeSamples: 5
+    })
+    await env.DB.batch(stationCodes.map((code) => env.DB.prepare(
+      `INSERT INTO station_rollup_archive_jobs
+         (day_at, station_code, next_attempt_at) VALUES (?, ?, ?)`
+    ).bind(dayAt, code, now)))
+    for (let index = 0; index < 2; index += 1) {
+      const bucketAt = dayAt + index * ROLLUP_SECONDS
+      for (const { shard, codes } of [
+        { shard: rollupBucketShard(880_001), codes: [880_001, 880_017] },
+        { shard: rollupBucketShard(880_002), codes: [880_002] }
+      ]) {
+        const payload = await Effect.runPromise(encodeRollupBucket(
+          bucketAt,
+          codes.map((code) => rollup(code, bucketAt, code === 880_017 ? 7 + index * 2 : 3 + index * 2))
+        ))
+        await env.DB.prepare(
+          "INSERT INTO station_rollup_buckets_5m (bucket_at, shard, payload) VALUES (?, ?, ?)"
+        ).bind(bucketAt, shard, payload).run()
+      }
+    }
+
+    const prepare = vi.spyOn(env.DB, "prepare")
+    try {
+      const maintenance = await Effect.runPromise(
+        Effect.gen(function*() {
+          const archive = yield* RollupArchive
+          return yield* archive.maintain(now, { prepareLimit: 2, deliveryLimit: 0 })
+        }).pipe(Effect.provide(makeRollupArchiveLive(env.DB)))
+      )
+      const sourceReads = prepare.mock.calls.filter(([sql]) =>
+        sql.includes("FROM station_rollup_buckets_5m")
+      ).length
+      expect(maintenance).toMatchObject({ prepared: 2, failed: 0 })
+      expect(sourceReads).toBe(1)
+    } finally {
+      prepare.mockRestore()
+    }
+
+    const jobs = await env.DB.prepare(
+      "SELECT station_code, payload FROM station_rollup_archive_jobs WHERE day_at = ? ORDER BY station_code"
+    ).bind(dayAt).all<{ station_code: number; payload: string | null }>()
+    expect(jobs.results.map(({ station_code, payload }) => [station_code, payload !== null]))
+      .toEqual([[880_001, true], [880_002, false], [880_017, true]])
+    for (const job of jobs.results) {
+      if (job.payload === null) continue
+      const block = JSON.parse(job.payload)
+      expect(block.stationCode).toBe(job.station_code)
+      expect(block.hourly).toHaveLength(1)
+      expect(block.hourly[0][1]).toBe(10)
+      expect(block.hourly[0][4]).toBe(job.station_code === 880_017 ? 8 : 4)
+    }
+    await env.DB.prepare(
+      "DELETE FROM station_rollup_archive_jobs WHERE day_at = ?"
+    ).bind(dayAt).run()
+  })
+
+  it("isolates archive sources by day and shard and retries corrupt groups", async () => {
+    const dayAt = 90 * DAY_SECONDS
+    const now = dayAt + 2 * DAY_SECONDS
+    const jobs = [
+      { dayAt, code: 890_001 },
+      { dayAt, code: 890_017 },
+      { dayAt, code: 890_002 },
+      { dayAt: dayAt + DAY_SECONDS, code: 890_001 }
+    ]
+    const payloadFor = (bucketAt: number, stationCode: number, average: number) =>
+      Effect.runPromise(encodeRollupBucket(bucketAt, [{
+        stationCode,
+        bucketAt,
+        sampleCount: 5,
+        mechanical: Aggregate.make({ min: average, max: average, avg: average }),
+        mechanicalRemoved: 1,
+        mechanicalReturned: 2,
+        electric: Aggregate.make({ min: 1, max: 3, avg: 2 }),
+        electricRemoved: 1,
+        electricReturned: 1,
+        docks: Aggregate.make({ min: 8, max: 12, avg: 10 }),
+        unavailable: Aggregate.make({ min: 0, max: 2, avg: 1 }),
+        operativeSamples: 5
+      }]))
+    const sources = [
+      { dayAt, code: 890_001, payload: await payloadFor(dayAt + ROLLUP_SECONDS, 890_001, 4) },
+      { dayAt, code: 890_002, payload: await payloadFor(dayAt, 890_002, 6) },
+      { dayAt: dayAt + DAY_SECONDS, code: 890_001, payload: await payloadFor(dayAt + DAY_SECONDS, 890_001, 9) }
+    ]
+    await env.DB.batch([
+      ...jobs.map((job) => env.DB.prepare(
+        `INSERT INTO station_rollup_archive_jobs
+           (day_at, station_code, next_attempt_at) VALUES (?, ?, ?)`
+      ).bind(job.dayAt, job.code, now)),
+      ...sources.map((source) => env.DB.prepare(
+        "INSERT INTO station_rollup_buckets_5m (bucket_at, shard, payload) VALUES (?, ?, ?)"
+      ).bind(source.dayAt, rollupBucketShard(source.code), source.payload))
+    ])
+    const layer = makeRollupArchiveLive(env.DB)
+    const maintain = (at: number) => Effect.runPromise(
+      Effect.gen(function*() {
+        const archive = yield* RollupArchive
+        return yield* archive.maintain(at, { prepareLimit: 4, deliveryLimit: 0 })
+      }).pipe(Effect.provide(layer))
+    )
+    expect(await maintain(now)).toMatchObject({ prepared: 2, failed: 2 })
+    const rows = await env.DB.prepare(
+      `SELECT day_at, station_code, payload, next_attempt_at, last_attempt_at
+       FROM station_rollup_archive_jobs WHERE day_at IN (?, ?) ORDER BY day_at, station_code`
+    ).bind(dayAt, dayAt + DAY_SECONDS).all<{
+      day_at: number
+      station_code: number
+      payload: string | null
+      next_attempt_at: number
+      last_attempt_at: number | null
+    }>()
+    for (const row of rows.results) {
+      if (row.day_at === dayAt && row.station_code !== 890_002) {
+        expect(row.payload).toBeNull()
+        expect(row.next_attempt_at).toBe(now + 60)
+        expect(row.last_attempt_at).toBeNull()
+      } else {
+        expect(row.payload).not.toBeNull()
+        const block = JSON.parse(row.payload ?? "null")
+        expect(block.dayAt).toBe(row.day_at)
+        expect(block.hourly[0][4]).toBe(row.station_code === 890_002 ? 6 : 9)
+      }
+    }
+    const repaired = await payloadFor(dayAt, 890_001, 4)
+    await env.DB.prepare(
+      "UPDATE station_rollup_buckets_5m SET payload = ? WHERE bucket_at = ? AND shard = ?"
+    ).bind(repaired, dayAt, rollupBucketShard(890_001)).run()
+    expect(await maintain(now + 60)).toMatchObject({ prepared: 2, failed: 0 })
+    const recovered = await env.DB.prepare(
+      "SELECT payload FROM station_rollup_archive_jobs WHERE day_at = ? AND station_code = ?"
+    ).bind(dayAt, 890_001).first<{ payload: string }>()
+    expect(JSON.parse(recovered?.payload ?? "null").hourly[0][4]).toBe(4)
+    await env.DB.prepare(
+      "DELETE FROM station_rollup_archive_jobs WHERE day_at IN (?, ?)"
+    ).bind(dayAt, dayAt + DAY_SECONDS).run()
   })
 
   it("fails closed for corrupt D1 history", async () => {

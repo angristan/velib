@@ -35,10 +35,12 @@ At 1,519 stations, this changes the main history path from about 437,000 station
 The existing durable job tables still protect daily generation:
 
 1. The Worker reconciles the six most recent completed UTC days.
-2. A job reads that station's packed five-minute points for one day.
-3. It aggregates the points to one-hour resolution and stores the prepared payload in D1.
+2. The Worker claims preparation jobs by day and shard, then reads and decodes each group's five-minute buckets once.
+3. It aggregates each station's points to one-hour resolution and stores a separate prepared payload in D1.
 4. It replaces that day in the station's monthly D1 archive.
 5. It deletes the job only after the archive row is committed.
+
+Shared source points stay within one maintenance invocation. A later invocation rereads D1, so corrected source buckets are not hidden by a warm cache. A corrupt source retries only the jobs in its day-and-shard group; other groups continue.
 
 Preparation and delivery use bounded retries. Replacing one day is idempotent. Archive failures do not stop collection or live broadcasts.
 
