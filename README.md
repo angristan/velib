@@ -47,7 +47,7 @@ Open <http://127.0.0.1:5173>. See [Development](docs/development.md) to populate
 
 ## Data and attribution
 
-Availability and station metadata come from the [Vélib’ Métropole GBFS open-data feeds](https://www.velib-metropole.fr/donnees-open-data-gbfs-du-service-velib-metropole), published under the French [Licence Ouverte 2.0](https://www.etalab.gouv.fr/licence-ouverte-open-licence/). Map data is attributed in the interface by the configured basemap provider.
+Availability and station metadata come from the [Vélib’ Métropole GBFS open-data feeds](https://www.velib-metropole.fr/donnees-open-data-gbfs-du-service-velib-metropole), published under the French [Licence Ouverte 2.0](https://www.etalab.gouv.fr/licence-ouverte-open-licence/). Vector basemaps come from [OpenFreeMap](https://openfreemap.org/) and need no API key. OpenFreeMap, OpenMapTiles, and OpenStreetMap attribution remains visible on the map.
 
 ## License
 

@@ -8,7 +8,7 @@ import {
 } from "@tabler/icons-react"
 import type { FeatureCollection, Point } from "geojson"
 import { GeoJSONSource, Map, Marker, NavigationControl } from "maplibre-gl"
-import type { MapLayerMouseEvent, StyleSpecification } from "maplibre-gl"
+import type { MapLayerMouseEvent } from "maplibre-gl"
 import { useEffect, useRef, useState } from "react"
 import { useI18n, type Messages } from "../i18n"
 import { updateWhenMapResourceAvailable } from "../map-readiness"
@@ -197,41 +197,11 @@ const addAvailabilityMarkerImages = (
   }
 }
 
-const cartoAttribution = (copy: Messages["map"]): string =>
-  `&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> ${copy.contributors} &copy; <a href="https://carto.com/attributions">CARTO</a> · ${copy.data} <a href="https://www.velib-metropole.fr/donnees-open-data-gbfs-du-service-velib-metropole">Vélib’ Métropole</a> (<a href="https://www.etalab.gouv.fr/licence-ouverte-open-licence/">${copy.openLicence}</a>) · ${copy.unofficial}`
+const dataAttribution = (copy: Messages["map"]): string =>
+  `${copy.data} <a href="https://www.velib-metropole.fr/donnees-open-data-gbfs-du-service-velib-metropole">Vélib’ Métropole</a> (<a href="https://www.etalab.gouv.fr/licence-ouverte-open-licence/">${copy.openLicence}</a>) · ${copy.unofficial}`
 
-const mapBackgrounds: readonly MapBackground[] = ["light", "dark"]
-
-const mapStyle = (background: MapBackground, attribution: string): StyleSpecification => ({
-  version: 8,
-  glyphs: "https://fonts.openmaptiles.org/{fontstack}/{range}.pbf",
-  sources: {
-    "carto-light": {
-      type: "raster",
-      tiles: [
-        "https://a.basemaps.cartocdn.com/light_all/{z}/{x}/{y}@2x.png",
-        "https://b.basemaps.cartocdn.com/light_all/{z}/{x}/{y}@2x.png",
-      ],
-      tileSize: 256,
-      attribution,
-    },
-    "carto-dark": {
-      type: "raster",
-      tiles: [
-        "https://a.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}@2x.png",
-        "https://b.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}@2x.png",
-      ],
-      tileSize: 256,
-      attribution,
-    },
-  },
-  layers: mapBackgrounds.map((option) => ({
-    id: `carto-${option}`,
-    type: "raster",
-    source: `carto-${option}`,
-    layout: { visibility: option === background ? "visible" : "none" },
-  })),
-})
+const mapStyle = (background: MapBackground): string =>
+  `https://tiles.openfreemap.org/styles/${background === "dark" ? "dark" : "positron"}`
 
 export const MapView = ({
   stations,
@@ -275,12 +245,12 @@ export const MapView = ({
 
     const map = new Map({
       container: containerRef.current,
-      style: mapStyle(mapBackground, cartoAttribution(copy)),
+      style: mapStyle(mapBackground),
       center: [initialCamera.longitude, initialCamera.latitude],
       zoom: initialCamera.zoom,
       minZoom: 9,
       maxZoom: 19,
-      attributionControl: {},
+      attributionControl: { customAttribution: dataAttribution(copy) },
       locale: {
         "NavigationControl.ZoomIn": copy.zoomIn,
         "NavigationControl.ZoomOut": copy.zoomOut,
@@ -406,7 +376,7 @@ export const MapView = ({
         minzoom: 14,
         filter: ["!", ["has", "point_count"]],
         paint: {
-          "circle-color": "#8a94a6",
+          "circle-color": mapBackground === "dark" ? "#7188a5" : "#8a94a6",
           "circle-opacity": ["case", ["==", ["get", "status"], "unavailable"], 0.65, 1],
           "circle-radius": 11,
           "circle-stroke-color": [
@@ -431,7 +401,7 @@ export const MapView = ({
         layout: {
           "text-allow-overlap": true,
           "text-field": ["to-string", ["get", "mechanical"]],
-          "text-font": ["Open Sans Bold"],
+          "text-font": ["Noto Sans Bold"],
           "text-ignore-placement": true,
           "text-size": 10,
         },
@@ -450,7 +420,7 @@ export const MapView = ({
         layout: {
           "text-allow-overlap": true,
           "text-field": ["to-string", ["get", "electric"]],
-          "text-font": ["Open Sans Bold"],
+          "text-font": ["Noto Sans Bold"],
           "text-ignore-placement": true,
           "text-size": 10,
         },
@@ -469,7 +439,7 @@ export const MapView = ({
         layout: {
           "text-allow-overlap": true,
           "text-field": ["to-string", ["get", "docks"]],
-          "text-font": ["Open Sans Bold"],
+          "text-font": ["Noto Sans Bold"],
           "text-ignore-placement": true,
           "text-size": 10,
         },
@@ -663,8 +633,14 @@ export const MapView = ({
       }
     }
 
-    if (map.loaded()) update()
-    else map.once("load", update)
+    return updateWhenMapResourceAvailable(
+      () => map.getSource("stations") instanceof GeoJSONSource,
+      update,
+      (listener) => {
+        map.once("load", listener)
+        return () => map.off("load", listener)
+      },
+    )
   }, [mapBackground, stations])
 
   useEffect(() => {
@@ -687,30 +663,6 @@ export const MapView = ({
       },
     )
   }, [activityChanges, stations])
-
-  useEffect(() => {
-    const map = mapRef.current
-    if (!map) return
-
-    const update = () => {
-      for (const option of mapBackgrounds) {
-        map.setLayoutProperty(
-          `carto-${option}`,
-          "visibility",
-          option === mapBackground ? "visible" : "none",
-        )
-      }
-      map.setPaintProperty(
-        "station-docks-badge",
-        "circle-color",
-        mapBackground === "dark" ? "#7188a5" : "#8a94a6",
-      )
-      map.resize()
-    }
-
-    if (map.loaded()) update()
-    else map.once("load", update)
-  }, [mapBackground])
 
   useEffect(() => {
     const map = mapRef.current
@@ -768,8 +720,14 @@ export const MapView = ({
       selectedCodeRef.current = selected?.code ?? null
     }
 
-    if (map.loaded()) updateSelection()
-    else map.once("load", updateSelection)
+    return updateWhenMapResourceAvailable(
+      () => map.getSource("stations") instanceof GeoJSONSource,
+      updateSelection,
+      (listener) => {
+        map.once("load", listener)
+        return () => map.off("load", listener)
+      },
+    )
   }, [selected?.code])
 
   useEffect(() => {
